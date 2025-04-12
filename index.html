@@ -88,17 +88,14 @@
         this.renderer = null;
         this.cssRenderer = null;
         this.controls = null;
-        this.velocity = new THREE.Vector3();
-        this.direction = new THREE.Vector3();
-        this.move = { forward: false, backward: false };
-        this.tilt = { left: 0, right: 0 }; // For mobile strafing via tilt
-        this.speed = 15.0;
-        this.strafeSpeed = 10.0; // Slightly slower for tilt-based strafing
+        this.move = { forward: false, backward: false, left: false, right: false };
+        this.moveSpeed = 0.1; // Matches A-Frame snippet
         this.clock = new THREE.Clock();
         this.raycaster = new THREE.Raycaster();
         this.isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
         this.zoomedObject = null;
         this.originalCameraPos = new THREE.Vector3();
+        this.tiltDirection = null; // For mobile strafing
         this.init();
       }
 
@@ -404,6 +401,24 @@
         animateReset();
       }
 
+      moveCamera(direction) {
+        const position = this.camera.position;
+        switch (direction) {
+          case 'up':
+            this.camera.position.set(position.x, position.y, position.z - this.moveSpeed);
+            break;
+          case 'down':
+            this.camera.position.set(position.x, position.y, position.z + this.moveSpeed);
+            break;
+          case 'left':
+            this.camera.position.set(position.x - this.moveSpeed, position.y, position.z);
+            break;
+          case 'right':
+            this.camera.position.set(position.x + this.moveSpeed, position.y, position.z);
+            break;
+        }
+      }
+
       setupEventListeners() {
         document.addEventListener('click', (event) => {
           if (this.isMobile || this.zoomedObject) return;
@@ -441,21 +456,21 @@
           });
 
           // Mobile controls for forward/backward
-          const buttons = {
-            'move-forward': 'forward',
-            'move-backward': 'backward'
-          };
-
-          Object.entries(buttons).forEach(([id, direction]) => {
-            const button = document.getElementById(id);
-            button.addEventListener('touchstart', (e) => {
-              e.preventDefault();
-              this.move[direction] = true;
-            });
-            button.addEventListener('touchend', (e) => {
-              e.preventDefault();
-              this.move[direction] = false;
-            });
+          document.getElementById('move-forward').addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            this.move.forward = true;
+          });
+          document.getElementById('move-forward').addEventListener('touchend', (e) => {
+            e.preventDefault();
+            this.move.forward = false;
+          });
+          document.getElementById('move-backward').addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            this.move.backward = true;
+          });
+          document.getElementById('move-backward').addEventListener('touchend', (e) => {
+            e.preventDefault();
+            this.move.backward = false;
           });
 
           // Device orientation for looking and strafing
@@ -477,8 +492,8 @@
             switch (event.code) {
               case 'KeyW': this.move.forward = true; break;
               case 'KeyS': this.move.backward = true; break;
-              case 'KeyA': this.tilt.left = 1; break;
-              case 'KeyD': this.tilt.right = 1; break;
+              case 'KeyA': this.move.left = true; break;
+              case 'KeyD': this.move.right = true; break;
               case 'Escape': this.resetZoom(); break;
             }
           });
@@ -487,8 +502,8 @@
             switch (event.code) {
               case 'KeyW': this.move.forward = false; break;
               case 'KeyS': this.move.backward = false; break;
-              case 'KeyA': this.tilt.left = 0; break;
-              case 'KeyD': this.tilt.right = 0; break;
+              case 'KeyA': this.move.left = false; break;
+              case 'KeyD': this.move.right = false; break;
             }
           });
         }
@@ -513,10 +528,12 @@
           this.camera.rotation.x = Math.max(-Math.PI/4, Math.min(Math.PI/4, beta * 0.5 - Math.PI/6));
 
           // Strafe based on tilt
-          const tiltThreshold = 0.2; // Radians (~11.5 degrees) to avoid accidental movement
-          const tiltValue = Math.abs(gamma) > tiltThreshold ? Math.sign(gamma) * (Math.abs(gamma) - tiltThreshold) : 0;
-          this.tilt.left = tiltValue > 0 ? tiltValue : 0;
-          this.tilt.right = tiltValue < 0 ? -tiltValue : 0;
+          const tiltThreshold = 15 * (Math.PI / 180); // 15 degrees
+          if (Math.abs(gamma) > tiltThreshold) {
+            this.tiltDirection = gamma > 0 ? 'left' : 'right';
+          } else {
+            this.tiltDirection = null;
+          }
         });
       }
 
@@ -525,22 +542,28 @@
         const delta = this.clock.getDelta();
 
         if (!this.zoomedObject) {
-          this.velocity.x -= this.velocity.x * 10.0 * delta;
-          this.velocity.z -= this.velocity.z * 10.0 * delta;
-
-          this.direction.z = Number(this.move.forward) - Number(this.move.backward);
-          this.direction.x = Number(this.tilt.right) - Number(this.tilt.left);
-          this.direction.normalize();
-
-          if (this.move.forward || this.move.backward) {
-            this.velocity.z -= this.direction.z * this.speed * delta;
+          // Handle forward/backward movement from buttons
+          if (this.move.forward) {
+            this.moveCamera('up');
           }
-          if (this.tilt.left || this.tilt.right) {
-            this.velocity.x -= this.direction.x * this.strafeSpeed * delta;
+          if (this.move.backward) {
+            this.moveCamera('down');
           }
 
-          this.controls.moveRight(this.velocity.x * delta); // Side-to-side movement
-          this.controls.moveForward(-this.velocity.z * delta); // Forward-backward movement
+          // Handle side-to-side movement from tilt on mobile
+          if (this.isMobile && this.tiltDirection) {
+            this.moveCamera(this.tiltDirection);
+          }
+
+          // Handle side-to-side movement from keys on desktop
+          if (!this.isMobile) {
+            if (this.move.left) {
+              this.moveCamera('left');
+            }
+            if (this.move.right) {
+              this.moveCamera('right');
+            }
+          }
         }
 
         this.renderer.render(this.scene, this.camera);
