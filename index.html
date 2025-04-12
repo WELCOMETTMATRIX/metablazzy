@@ -440,7 +440,33 @@
               this.zoomToWebView(intersects[0].object);
             }
           });
+             // Movement controls
+            const camera = document.querySelector('[camera]');
+            const moveSpeed = 0.1;
 
+            function moveCamera(direction) {
+                const position = camera.getAttribute('position');
+                switch (direction) {
+                    case 'up':
+                        camera.setAttribute('position', { x: position.x, y: position.y, z: position.z - moveSpeed });
+                        break;
+                    case 'down':
+                        camera.setAttribute('position', { x: position.x, y: position.y, z: position.z + moveSpeed });
+                        break;
+                    case 'left':
+                        camera.setAttribute('position', { x: position.x - moveSpeed, y: position.y, z: position.z });
+                        break;
+                    case 'right':
+                        camera.setAttribute('position', { x: position.x + moveSpeed, y: position.y, z: position.z });
+                        break;
+                }
+            }
+
+            document.getElementById('up').addEventListener('click', () => moveCamera('up'));
+            document.getElementById('down').addEventListener('click', () => moveCamera('down'));
+            document.getElementById('left').addEventListener('click', () => moveCamera('left'));
+            document.getElementById('right').addEventListener('click', () => moveCamera('right'));
+        
           // Mobile controls
           const buttons = {
             'move-forward': 'forward',
