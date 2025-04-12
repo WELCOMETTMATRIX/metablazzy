@@ -62,12 +62,10 @@
   </style>
 </head>
 <body>
-  <div id="info">Desktop: WASD: Move • Mouse: Look • Click: Interact<br>Mobile: Buttons: Move • Tilt: Look • Tap: Interact</div>
+  <div id="info">Desktop: WASD: Move • Mouse: Look • Click: Interact<br>Mobile: Buttons: Forward/Backward • Tilt: Look & Strafe • Tap: Interact</div>
   <div id="mobile-controls">
     <button class="control-button" id="move-forward">↑</button>
     <button class="control-button" id="move-backward">↓</button>
-    <button class="control-button" id="move-left">←</button>
-    <button class="control-button" id="move-right">→</button>
   </div>
   <script type="importmap">
     {
@@ -92,8 +90,10 @@
         this.controls = null;
         this.velocity = new THREE.Vector3();
         this.direction = new THREE.Vector3();
-        this.move = { forward: false, backward: false, left: false, right: false };
+        this.move = { forward: false, backward: false };
+        this.tilt = { left: 0, right: 0 }; // For mobile strafing via tilt
         this.speed = 15.0;
+        this.strafeSpeed = 10.0; // Slightly slower for tilt-based strafing
         this.clock = new THREE.Clock();
         this.raycaster = new THREE.Raycaster();
         this.isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
@@ -440,12 +440,10 @@
             }
           });
 
-          // Mobile controls
+          // Mobile controls for forward/backward
           const buttons = {
             'move-forward': 'forward',
-            'move-backward': 'backward',
-            'move-left': 'left',
-            'move-right': 'right'
+            'move-backward': 'backward'
           };
 
           Object.entries(buttons).forEach(([id, direction]) => {
@@ -460,9 +458,8 @@
             });
           });
 
-          // Device orientation for looking around
+          // Device orientation for looking and strafing
           if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
-            // iOS 13+ requires permission
             document.addEventListener('touchstart', () => {
               DeviceOrientationEvent.requestPermission()
                 .then(response => {
@@ -480,8 +477,8 @@
             switch (event.code) {
               case 'KeyW': this.move.forward = true; break;
               case 'KeyS': this.move.backward = true; break;
-              case 'KeyA': this.move.left = true; break;
-              case 'KeyD': this.move.right = true; break;
+              case 'KeyA': this.tilt.left = 1; break;
+              case 'KeyD': this.tilt.right = 1; break;
               case 'Escape': this.resetZoom(); break;
             }
           });
@@ -490,8 +487,8 @@
             switch (event.code) {
               case 'KeyW': this.move.forward = false; break;
               case 'KeyS': this.move.backward = false; break;
-              case 'KeyA': this.move.left = false; break;
-              case 'KeyD': this.move.right = false; break;
+              case 'KeyA': this.tilt.left = 0; break;
+              case 'KeyD': this.tilt.right = 0; break;
             }
           });
         }
@@ -511,8 +508,15 @@
           const gamma = event.gamma * (Math.PI / 180); // Left-right tilt
           const beta = event.beta * (Math.PI / 180);  // Front-back tilt
           
-          this.camera.rotation.y = -gamma * 0.5; // Yaw (horizontal look)
-          this.camera.rotation.x = Math.max(-Math.PI/4, Math.min(Math.PI/4, beta * 0.5 - Math.PI/6)); // Pitch (vertical look)
+          // Look around (yaw and pitch)
+          this.camera.rotation.y = -gamma * 0.5;
+          this.camera.rotation.x = Math.max(-Math.PI/4, Math.min(Math.PI/4, beta * 0.5 - Math.PI/6));
+
+          // Strafe based on tilt
+          const tiltThreshold = 0.2; // Radians (~11.5 degrees) to avoid accidental movement
+          const tiltValue = Math.abs(gamma) > tiltThreshold ? Math.sign(gamma) * (Math.abs(gamma) - tiltThreshold) : 0;
+          this.tilt.left = tiltValue > 0 ? tiltValue : 0;
+          this.tilt.right = tiltValue < 0 ? -tiltValue : 0;
         });
       }
 
@@ -525,14 +529,14 @@
           this.velocity.z -= this.velocity.z * 10.0 * delta;
 
           this.direction.z = Number(this.move.forward) - Number(this.move.backward);
-          this.direction.x = Number(this.move.right) - Number(this.move.left);
+          this.direction.x = Number(this.tilt.right) - Number(this.tilt.left);
           this.direction.normalize();
 
           if (this.move.forward || this.move.backward) {
             this.velocity.z -= this.direction.z * this.speed * delta;
           }
-          if (this.move.left || this.move.right) {
-            this.velocity.x -= this.direction.x * this.speed * delta;
+          if (this.tilt.left || this.tilt.right) {
+            this.velocity.x -= this.direction.x * this.strafeSpeed * delta;
           }
 
           this.controls.moveRight(this.velocity.x * delta); // Side-to-side movement
