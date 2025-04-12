@@ -62,7 +62,7 @@
   </style>
 </head>
 <body>
-  <div id="info">Desktop: WASD: Move • Mouse: Look • Click: Interact<br>Mobile: Buttons: Forward/Backward • Tilt: Look & Strafe • Tap: Interact</div>
+  <div id="info">Desktop: WASD: Move • Mouse: Look • Click: Interact<br>Mobile: Buttons: Forward/Backward • Swipe: Strafe • Tilt:FULook • Tap: Interact</div>
   <div id="mobile-controls">
     <button class="control-button" id="move-forward">↑</button>
     <button class="control-button" id="move-backward">↓</button>
@@ -89,13 +89,15 @@
         this.cssRenderer = null;
         this.controls = null;
         this.move = { forward: false, backward: false, left: false, right: false };
-        this.moveSpeed = 0.2; // Increased for faster movement
+        this.moveSpeed = 0.3; // Increased for faster movement
         this.clock = new THREE.Clock();
         this.raycaster = new THREE.Raycaster();
         this.isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
         this.zoomedObject = null;
         this.originalCameraPos = new THREE.Vector3();
-        this.tiltVelocity = 0; // For smoother VR-like strafing
+        this.touchStrafeVelocity = 0; // For touchscreen strafing
+        this.touchStartX = null;
+        this.floorY = 1.6; // Lock player to floor height
         this.init();
       }
 
@@ -124,7 +126,7 @@
           0.1,
           1000
         );
-        this.camera.position.set(0, 1.6, 8);
+        this.camera.position.set(0, this.floorY, 8);
       }
 
       setupRenderers() {
@@ -439,13 +441,21 @@
         const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
         const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
 
-        if (this.move.forward) velocity.add(forward);
-        if (this.move.backward) velocity.sub(forward);
-        if (this.move.left || this.tiltVelocity < -0.1) velocity.sub(right.clone().multiplyScalar(Math.abs(this.tiltVelocity) || 1));
-        if (this.move.right || this.tiltVelocity > 0.1) velocity.add(right.clone().multiplyScalar(Math.abs(this.tiltVelocity) || 1));
+        // Forward/backward with higher speed
+        if (this.move.forward) velocity.add(forward.clone().multiplyScalar(1.5)); // 50% faster forward/back
+        if (this.move.backward) velocity.sub(forward.clone().multiplyScalar(1.5));
+
+        // Side-to-side movement (desktop or mobile touch)
+        if (this.move.left || this.touchStrafeVelocity < -0.1) {
+          velocity.sub(right.clone().multiplyScalar(Math.abs(this.touchStrafeVelocity) || 1));
+        }
+        if (this.move.right || this.touchStrafeVelocity > 0.1) {
+          velocity.add(right.clone().multiplyScalar(Math.abs(this.touchStrafeVelocity) || 1));
+        }
 
         velocity.multiplyScalar(this.moveSpeed * delta);
         this.camera.position.add(velocity);
+        this.camera.position.y = this.floorY; // Lock to floor
       }
 
       setupEventListeners() {
@@ -466,6 +476,7 @@
           });
 
           if (this.isMobile) {
+            // Touch events for strafing
             document.addEventListener('touchstart', (event) => {
               if (event.target.classList.contains('control-button')) return;
               
@@ -474,8 +485,10 @@
                 return;
               }
               
+              const touch = event.touches[0];
+              this.touchStartX = touch.clientX;
+
               if (this.webViewObjects) {
-                const touch = event.touches[0];
                 this.raycaster.setFromCamera(new THREE.Vector2(
                   (touch.clientX / window.innerWidth) * 2 - 1,
                   -(touch.clientY / window.innerHeight) * 2 + 1
@@ -489,6 +502,21 @@
               }
             });
 
+            document.addEventListener('touchmove', (event) => {
+              if (this.zoomedObject || this.touchStartX === null) return;
+              
+              const touch = event.touches[0];
+              const deltaX = touch.clientX - this.touchStartX;
+              this.touchStrafeVelocity = deltaX * 0.01; // Scale for smooth strafing
+              this.touchStartX = touch.clientX;
+            });
+
+            document.addEventListener('touchend', () => {
+              this.touchStrafeVelocity = 0;
+              this.touchStartX = null;
+            });
+
+            // Forward/backward buttons
             const forwardButton = document.getElementById('move-forward');
             const backwardButton = document.getElementById('move-backward');
             if (forwardButton && backwardButton) {
@@ -510,6 +538,7 @@
               });
             }
 
+            // Device orientation for looking
             if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
               document.addEventListener('touchstart', () => {
                 DeviceOrientationEvent.requestPermission()
@@ -572,10 +601,6 @@
             // Look around (yaw and pitch)
             this.camera.rotation.y = -gamma * 0.5;
             this.camera.rotation.x = Math.max(-Math.PI/4, Math.min(Math.PI/4, beta * 0.5 - Math.PI/6));
-
-            // VR-like strafing based on tilt
-            const tiltThreshold = 10 * (Math.PI / 180); // 10 degrees for sensitivity
-            this.tiltVelocity = Math.abs(gamma) > tiltThreshold ? -gamma * 0.5 : 0;
           });
         } catch (error) {
           console.error('Device orientation setup failed:', error);
