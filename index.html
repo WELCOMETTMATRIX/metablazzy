@@ -1,499 +1,611 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Blazzy CRO Metaverse</title>
-    <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
-    <script src="https://aframe.io/releases/1.2.0/aframe-physics-system.min.js"></script>
-    <style>
-        body { margin: 0; overflow: hidden; }
-        a-scene { height: 100vh; }
-        #scoreboard {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            color: white;
-            font-size: 24px;
-            background: rgba(0, 0, 0, 0.5);
-            padding: 10px;
-            border-radius: 5px;
-        }
-        .control-button {
-            position: absolute;
-            width: 60px;
-            height: 60px;
-            border-radius: 30px;
-            background: rgba(255, 255, 255, 0.8);
-            border: 2px solid #000;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            font-size: 24px;
-            cursor: pointer;
-            display: none; /* Hide by default */
-        }
-        #up { bottom: 100px; left: calc(50% - 30px); }
-        #down { bottom: 30px; left: calc(50% - 30px); }
-        #left { bottom: 70px; left: 10px; }
-        #right { bottom: 70px; right: 10px; }
-
-        /* Show controls only on mobile devices */
-        @media (max-width: 768px) {
-            .control-button {
-                display: flex; /* Show on mobile */
-            }
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Immersive 3D Dashboard</title>
+  <style>
+    body { 
+      margin: 0; 
+      overflow: hidden; 
+      background: #0a0a1a;
+      touch-action: none;
+    }
+    #info {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: #ffffff;
+      font-family: 'Inter', -apple-system, sans-serif;
+      font-size: 14px;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 8px 12px;
+      border-radius: 6px;
+      user-select: none;
+      z-index: 10;
+    }
+    canvas {
+      display: block;
+    }
+    #mobile-controls {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: none;
+      z-index: 20;
+    }
+    .control-button {
+      background: rgba(255, 255, 255, 0.2);
+      border: none;
+      border-radius: 50%;
+      width: 60px;
+      height: 60px;
+      margin: 0 10px;
+      color: white;
+      font-size: 24px;
+      cursor: pointer;
+      touch-action: manipulation;
+      transition: background 0.2s;
+    }
+    .control-button:active {
+      background: rgba(255, 255, 255, 0.4);
+    }
+    @media (max-width: 768px) {
+      #mobile-controls {
+        display: flex;
+      }
+      #info {
+        font-size: 12px;
+      }
+    }
+  </style>
 </head>
 <body>
-    <div id="scoreboard">Score: <span id="score">0</span></div>
-    <a-scene physics background="color: black">
-        <!-- Sky -->
-        <a-sky src="https://cdn.aframe.io/360-image-gallery-boilerplate/img/sechelt.jpg" rotation="0 -90 0"></a-sky>
+  <div id="info">Desktop: WASD: Move • Mouse: Look • Click: Interact<br>Mobile: Buttons: Forward/Backward • Tilt: Look & Strafe • Tap: Interact</div>
+  <div id="mobile-controls">
+    <button class="control-button" id="move-forward">↑</button>
+    <button class="control-button" id="move-backward">↓</button>
+  </div>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
 
-        <!-- Ground -->
-        <a-plane position="0 0 -4" rotation="-90 0 0" width="20" height="20" color="#1A1A1A" shadow="receive: true"></a-plane>
+    class SceneManager {
+      constructor() {
+        this.scene = new THREE.Scene();
+        this.camera = null;
+        this.renderer = null;
+        this.cssRenderer = null;
+        this.controls = null;
+        this.move = { forward: false, backward: false, left: false, right: false };
+        this.moveSpeed = 0.2; // Increased for faster movement
+        this.clock = new THREE.Clock();
+        this.raycaster = new THREE.Raycaster();
+        this.isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
+        this.zoomedObject = null;
+        this.originalCameraPos = new THREE.Vector3();
+        this.tiltVelocity = 0; // For smoother VR-like strafing
+        this.init();
+      }
 
-        <!-- Token -->
-        <a-cylinder id="token" position="0 1.5 -3" radius="0.3" height="0.1" color="#FFD700" shadow="cast: true" class="clickable">
-            <a-animation attribute="rotation" to="0 360 0" dur="2000" repeat="indefinite"></a-animation>
-            <a-light type="point" color="#FFD700" intensity="0.5" distance="5"></a-light>
-        </a-cylinder>
+      init() {
+        this.setupScene();
+        this.setupCamera();
+        this.setupRenderers();
+        this.setupControls();
+        this.setupEnvironment();
+        this.setupModels();
+        this.setupWebViews();
+        this.setupLighting();
+        this.setupEventListeners();
+        this.animate();
+      }
 
-        <!-- Info Panels -->
-        <a-entity class="panel" position="-3 1.5 -5" rotation="0 45 0">
-            <a-plane width="3" height="2" color="#1C1C1C" opacity="0.95" material="transparent: true; roughness: 0.5;"></a-plane>
-            <a-text value="Blazzy CRO Token" color="#00FFFF" position="0 0.7 0.01" align="center" width="2.5"></a-text>
-            <a-text value="A Revolutionary Token for the Future" color="#FFFFFF" position="0 0.4 0.01" align="center" width="2"></a-text>
-            <a-text value="TOKEN ADDRESS:" color="#FFD700" position="0 0 0.01" align="center" width="1.5"></a-text>
-            <a-text value="0x9ef3fc220867f6cf5655db3d950cda67a3a92f9f" color="#FFFFFF" position="0 -0.3 0.01" align="center" width="2" wrap-count="30"></a-text>
-            <a-text value="LIQUIDITY ADDRESS:" color="#FFD700" position="0 -0.5 0.01" align="center" width="1.5"></a-text>
-            <a-text value="0x5f028f49a7443f34aedfc19ed986c92243d98ef5" color="#FFFFFF" position="0 -0.7 0.04" align="center" width="2" wrap-count="30"></a-text>
-        </a-entity>
+      setupScene() {
+        this.scene.background = new THREE.Color(0x0a0a1a);
+        this.scene.fog = new THREE.FogExp2(0x0a0a1a, 0.015);
+      }
 
-        <!-- Roadmap Panel -->
-        <a-entity class="roadmap" position="0 1.5 -5" rotation="0 0 0">
-            <a-plane width="4" height="6" color="#222" opacity="0.95" material="transparent: true; roughness: 0.5;"></a-plane>
-            <a-ring position="0 0 0.01" radius-inner="2.9" radius-outer="3" color="#FF007F" material="emissive: #FF007F; emissiveIntensity: 0.4;"></a-ring>
-            <a-text value="Blazzy CRO Token Roadmap" color="#FF007F" position="0 2.7 0.02" align="center" width="3.5"></a-text>
+      setupCamera() {
+        this.camera = new THREE.PerspectiveCamera(
+          75,
+          window.innerWidth / window.innerHeight,
+          0.1,
+          1000
+        );
+        this.camera.position.set(0, 1.6, 8);
+      }
 
-            <!-- Phases -->
-            <a-circle position="0 2 0.02" radius="0.15" color="#00FFFF" material="emissive: #00FFFF; emissiveIntensity: 0.3;"></a-circle>
-            <a-text value="Phase 1: Launch" color="#FFFFFF" position="0.3 2 0.02" align="left" width="3"></a-text>
+      setupRenderers() {
+        try {
+          this.renderer = new THREE.WebGLRenderer({ 
+            antialias: true, 
+            powerPreference: 'high-performance',
+            alpha: true 
+          });
+          this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+          this.renderer.setSize(window.innerWidth, window.innerHeight);
+          this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+          this.renderer.toneMappingExposure = 1.0;
+          document.body.appendChild(this.renderer.domElement);
 
-            <a-circle position="0 1 0.02" radius="0.15" color="#FFD700" material="emissive: #FFD700; emissiveIntensity: 0.3;"></a-circle>
-            <a-text value="Phase 2: Growth" color="#FFFFFF" position="0.3 1 0.02" align="left" width="3"></a-text>
+          this.cssRenderer = new CSS3DRenderer();
+          this.cssRenderer.setSize(window.innerWidth, window.innerHeight);
+          this.cssRenderer.domElement.style.position = 'absolute';
+          this.cssRenderer.domElement.style.top = '0';
+          document.body.appendChild(this.cssRenderer.domElement);
+        } catch (error) {
+          console.error('Renderer setup failed:', error);
+        }
+      }
 
-            <a-circle position="0 0 0.02" radius="0.15" color="#FF007F" material="emissive: #FF007F; emissiveIntensity: 0.3;"></a-circle>
-            <a-text value="Phase 3: Expansion" color="#FFFFFF" position="0.3 0 0.02" align="left" width="3"></a-text>
+      setupControls() {
+        try {
+          this.controls = new PointerLockControls(this.camera, this.renderer.domElement);
+          const infoElement = document.getElementById('info');
+          if (infoElement) {
+            this.controls.addEventListener('lock', () => {
+              infoElement.style.opacity = '0.3';
+            });
+            this.controls.addEventListener('unlock', () => {
+              infoElement.style.opacity = '1';
+            });
+          }
+          this.scene.add(this.controls.getObject());
+        } catch (error) {
+          console.error('Controls setup failed:', error);
+        }
+      }
 
-            <a-circle position="0 -1 0.02" radius="0.15" color="#FFFFFF" material="emissive: #FFFFFF; emissiveIntensity: 0.3;"></a-circle>
-            <a-text value="Phase 4: Legacy" color="#FFFFFF" position="0.3 -1 0.02" align="left" width="3"></a-text>
-        </a-entity>
+      setupEnvironment() {
+        try {
+          const floor = new THREE.Mesh(
+            new THREE.PlaneGeometry(40, 40),
+            new THREE.MeshStandardMaterial({ 
+              color: 0x1c2526, 
+              roughness: 0.3, 
+              metalness: 0.6 
+            })
+          );
+          floor.rotation.x = -Math.PI / 2;
+          floor.receiveShadow = true;
+          this.scene.add(floor);
 
-        <!-- Tokenomics Panel -->
-        <a-entity class="panel" position="3 1.5 -5" rotation="0 -45 0">
-            <a-plane width="2" height="1" color="#111" opacity="0.8"></a-plane>
-            <a-text value="Tokenomics" color="#FFFFFF" position="0 0.3 0.01" align="center"></a-text>
-            <a-text value="Total Supply: 1,000,000,000" color="#FFFFFF" position="0 0 0.01" align="center"></a-text>
-        </a-entity>
+          const ceiling = new THREE.Mesh(
+            new THREE.SphereGeometry(20, 32, 32, 0, Math.PI * 2, 0, Math.PI / 2),
+            new THREE.MeshStandardMaterial({ 
+              color: 0x3a3a4a, 
+              roughness: 0.5, 
+              metalness: 0.4, 
+              transparent: true, 
+              opacity: 0.7, 
+              side: THREE.DoubleSide 
+            })
+          );
+          ceiling.position.set(0, 8, 0);
+          ceiling.rotation.x = Math.PI;
+          this.scene.add(ceiling);
 
-        <!-- Animated Images -->
-        <a-image src="https://pbs.twimg.com/profile_images/1870863729568489472/lkVXU6N-_400x400.jpg" position="-1 1.5 -3" rotation="0 0 0" width="1" height="1.5" animation="property: rotation; to: 0 360 0; loop: true; dur: 10000"></a-image>
+          const starCount = 200;
+          const starGeometry = new THREE.BufferGeometry();
+          const starPositions = new Float32Array(starCount * 3);
+          for (let i = 0; i < starCount * 3; i++) {
+            starPositions[i] = (Math.random() - 0.5) * 150;
+          }
+          starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+          const starMaterial = new THREE.PointsMaterial({ 
+            color: 0xaaaaaa, 
+            size: 0.05,
+            transparent: true,
+            opacity: 0.8
+          });
+          const stars = new THREE.Points(starGeometry, starMaterial);
+          stars.position.y = 15;
+          this.scene.add(stars);
+        } catch (error) {
+          console.error('Environment setup failed:', error);
+        }
+      }
 
-        <!-- Interactive Token -->
-        <script>
-            const token = document.getElementById('token');
-            const scoreDisplay = document.getElementById('score');
-            let score = 0;
+      setupModels() {
+        const loader = new GLTFLoader();
+        const models = [
+          {
+            url: 'https://threejs.org/examples/models/gltf/DamagedHelmet/glTF/DamagedHelmet.gltf',
+            position: [5, 0, -10],
+            scale: [1.5, 1.5, 1.5],
+            rotation: [0, Math.PI / 4, 0]
+          },
+          {
+            url: 'https://threejs.org/examples/models/gltf/LeePerrySmith/LeePerrySmith.gltf',
+            position: [-5, 3, -5],
+            scale: [0.8, 0.8, 0.8],
+            animate: (model) => {
+              model.position.y = 3 + Math.sin(Date.now() * 0.001) * 0.2;
+            }
+          },
+          {
+            url: 'https://threejs.org/examples/models/gltf/CesiumMan/glTF/CesiumMan.gltf',
+            position: [-8, 0, 0],
+            scale: [1.2, 1.2, 1.2],
+            rotation: [0, -Math.PI / 6, 0]
+          }
+        ];
 
-            token.addEventListener('click', function () {
-                score += 5;
-                scoreDisplay.textContent = score;
+        models.forEach(({ url, position, scale, rotation, animate }) => {
+          loader.load(
+            url,
+            (gltf) => {
+              const model = gltf.scene;
+              model.position.set(...position);
+              model.scale.set(...scale);
+              if (rotation) model.rotation.set(...rotation);
+              model.traverse(child => {
+                if (child.isMesh) {
+                  child.castShadow = true;
+                  child.receiveShadow = true;
+                }
+              });
+              this.scene.add(model);
+              if (animate) {
+                const animateModel = () => {
+                  animate(model);
+                  requestAnimationFrame(animateModel);
+                };
+                animateModel();
+              }
+            },
+            undefined,
+            (error) => console.error(`Error loading ${url}:`, error)
+          );
+        });
+      }
 
-                token.setAttribute('scale', '0 0 0');
+      setupWebViews() {
+        try {
+          const createIframe = (src, style = {}) => {
+            const iframe = document.createElement('iframe');
+            iframe.src = src;
+            Object.assign(iframe.style, {
+              width: '800px',
+              height: '600px',
+              border: '0',
+              borderRadius: '16px',
+              boxShadow: '0 0 20px rgba(0,255,255,0.3)',
+              ...style
+            });
+            return iframe;
+          };
 
-                setTimeout(() => {
-                    token.setAttribute('scale', '1 1 1');
-                    token.setAttribute('position', `${Math.random() * 4 - 2} 1.5 ${Math.random() * -4 - 1}`);
-                }, 500);
+          this.webViews = [
+            {
+              iframe: createIframe('https://dexscreener.com/cronos/0x5F028F49a7443f34aeDFc19ED986c92243d98EF5?embed=1&loadChartSettings=0&chartLeftToolbar=0&chartTheme=dark&theme=dark&chartStyle=0&chartType=usd&interval=15'),
+              position: [-12, 2.7, -12],
+              rotation: [0, 0.3, 0],
+              scale: 0.007,
+              originalScale: 0.007
+            },
+            {
+              iframe: createIframe('https://gopluslabs.io/token-security/25/0x9ef3fc220867f6cf5655db3d950cda67a3a92f9f', {
+                boxShadow: '0 0 20px rgba(0,255,100,0.25)'
+              }),
+              position: [0, 2.7, -15],
+              rotation: [0, 0, 0],
+              scale: 0.007,
+              originalScale: 0.007
+            },
+            {
+              iframe: createIframe('https://v0-fork-of-matrix-quantum-terminal-g0jxgv.vercel.app/', {
+                boxShadow: '0 0 30px rgba(0,255,150,0.7)'
+              }),
+              position: [12, 2.7, -12],
+              rotation: [0, -0.3, 0],
+              scale: 0.007,
+              originalScale: 0.007
+            },
+            {
+              iframe: createIframe('https://v0-the-orb-sigma.vercel.app/', {
+                boxShadow: '0 0 30px rgba(100,100,255,0.7)'
+              }),
+              position: [-6, 4.5, -14],
+              rotation: [0, 0.15, 0],
+              scale: 0.007,
+              originalScale: 0.007
+            },
+            {
+              iframe: createIframe('https://www.dextools.io/widget-chart/en/cronos/pe-light/0x5f028f49a7443f34aedfc19ed986c92243d98ef5?theme=light&chartType=2&chartResolution=30&drawingToolbars=false'),
+              position: [6, 4.5, -14],
+              rotation: [0, -0.15, 0],
+              scale: 0.007,
+              originalScale: 0.007
+            }
+          ];
+
+          this.webViewObjects = this.webViews.map(({ iframe, position, rotation, scale }) => {
+            const cssObject = new CSS3DObject(iframe);
+            cssObject.position.set(...position);
+            cssObject.rotation.set(...rotation);
+            cssObject.scale.set(scale, scale, scale);
+            this.scene.add(cssObject);
+            return cssObject;
+          });
+        } catch (error) {
+          console.error('Web views setup failed:', error);
+        }
+      }
+
+      setupLighting() {
+        try {
+          const ambientLight = new THREE.AmbientLight(0x606060, 0.8);
+          this.scene.add(ambientLight);
+
+          const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
+          directionalLight.position.set(10, 10, 10);
+          directionalLight.castShadow = true;
+          directionalLight.shadow.mapSize.set(1024, 1024);
+          this.scene.add(directionalLight);
+        } catch (error) {
+          console.error('Lighting setup failed:', error);
+        }
+      }
+
+      zoomToWebView(cssObject) {
+        try {
+          if (this.zoomedObject === cssObject) {
+            this.resetZoom();
+            return;
+          }
+
+          this.originalCameraPos.copy(this.camera.position);
+          const targetPos = cssObject.position.clone();
+          targetPos.z += 2;
+          targetPos.y = cssObject.position.y;
+
+          this.controls.enabled = false;
+          this.zoomedObject = cssObject;
+
+          cssObject.scale.setScalar(cssObject.scale.x * 1.5);
+
+          const duration = 500;
+          const startTime = Date.now();
+          const startPos = this.camera.position.clone();
+          
+          const animateZoom = () => {
+            const elapsed = Date.now() - startTime;
+            const t = Math.min(elapsed / duration, 1);
+            
+            this.camera.position.lerpVectors(startPos, targetPos, t);
+            
+            if (t < 1) {
+              requestAnimationFrame(animateZoom);
+            } else {
+              cssObject.element.style.pointerEvents = 'auto';
+            }
+          };
+          
+          animateZoom();
+        } catch (error) {
+          console.error('Zoom to web view failed:', error);
+        }
+      }
+
+      resetZoom() {
+        try {
+          if (!this.zoomedObject) return;
+
+          const duration = 500;
+          const startTime = Date.now();
+          const startPos = this.camera.position.clone();
+          const cssObject = this.zoomedObject;
+
+          cssObject.element.style.pointerEvents = 'none';
+          cssObject.scale.setScalar(cssObject.scale.x / 1.5);
+
+          const animateReset = () => {
+            const elapsed = Date.now() - startTime;
+            const t = Math.min(elapsed / duration, 1);
+            
+            this.camera.position.lerpVectors(startPos, this.originalCameraPos, t);
+            
+            if (t < 1) {
+              requestAnimationFrame(animateReset);
+            } else {
+              this.controls.enabled = true;
+              this.zoomedObject = null;
+            }
+          };
+          
+          animateReset();
+        } catch (error) {
+          console.error('Reset zoom failed:', error);
+        }
+      }
+
+      moveCamera(delta) {
+        if (!this.camera) return;
+
+        const velocity = new THREE.Vector3();
+        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
+        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
+
+        if (this.move.forward) velocity.add(forward);
+        if (this.move.backward) velocity.sub(forward);
+        if (this.move.left || this.tiltVelocity < -0.1) velocity.sub(right.clone().multiplyScalar(Math.abs(this.tiltVelocity) || 1));
+        if (this.move.right || this.tiltVelocity > 0.1) velocity.add(right.clone().multiplyScalar(Math.abs(this.tiltVelocity) || 1));
+
+        velocity.multiplyScalar(this.moveSpeed * delta);
+        this.camera.position.add(velocity);
+      }
+
+      setupEventListeners() {
+        try {
+          document.addEventListener('click', (event) => {
+            if (this.isMobile || this.zoomedObject) return;
+            
+            this.controls.lock();
+            
+            if (this.webViewObjects) {
+              this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
+              const intersects = this.raycaster.intersectObjects(this.webViewObjects);
+              
+              if (intersects.length > 0) {
+                this.zoomToWebView(intersects[0].object);
+              }
+            }
+          });
+
+          if (this.isMobile) {
+            document.addEventListener('touchstart', (event) => {
+              if (event.target.classList.contains('control-button')) return;
+              
+              if (this.zoomedObject) {
+                this.resetZoom();
+                return;
+              }
+              
+              if (this.webViewObjects) {
+                const touch = event.touches[0];
+                this.raycaster.setFromCamera(new THREE.Vector2(
+                  (touch.clientX / window.innerWidth) * 2 - 1,
+                  -(touch.clientY / window.innerHeight) * 2 + 1
+                ), this.camera);
+                
+                const intersects = this.raycaster.intersectObjects(this.webViewObjects);
+                
+                if (intersects.length > 0) {
+                  this.zoomToWebView(intersects[0].object);
+                }
+              }
             });
 
-            // Movement controls
-            const camera = document.querySelector('[camera]');
-            const moveSpeed = 0.1;
-
-            function moveCamera(direction) {
-                const position = camera.getAttribute('position');
-                switch (direction) {
-                    case 'up':
-                        camera.setAttribute('position', { x: position.x, y: position.y, z: position.z - moveSpeed });
-                        break;
-                    case 'down':
-                        camera.setAttribute('position', { x: position.x, y: position.y, z: position.z + moveSpeed });
-                        break;
-                    case 'left':
-                        camera.setAttribute('position', { x: position.x - moveSpeed, y: position.y, z: position.z });
-                        break;
-                    case 'right':
-                        camera.setAttribute('position', { x: position.x + moveSpeed, y: position.y, z: position.z });
-                        break;
-                }
+            const forwardButton = document.getElementById('move-forward');
+            const backwardButton = document.getElementById('move-backward');
+            if (forwardButton && backwardButton) {
+              forwardButton.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                this.move.forward = true;
+              });
+              forwardButton.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                this.move.forward = false;
+              });
+              backwardButton.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                this.move.backward = true;
+              });
+              backwardButton.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                this.move.backward = false;
+              });
             }
 
-            document.getElementById('up').addEventListener('click', () => moveCamera('up'));
-            document.getElementById('down').addEventListener('click', () => moveCamera('down'));
-            document.getElementById('left').addEventListener('click', () => moveCamera('left'));
-            document.getElementById('right').addEventListener('click', () => moveCamera('right'));
-
-            // Moved JavaScript methods from inside a-scene
-            function setupControls() {
-                try {
-                    this.controls = new PointerLockControls(this.camera, this.renderer.domElement);
-                    this.controls.addEventListener('lock', () => {
-                        document.getElementById('info').style.opacity = '0.3';
-                    });
-                    this.controls.addEventListener('unlock', () => {
-                        document.getElementById('info').style.opacity = '1';
-                    });
-                    this.scene.add(this.controls.getObject());
-                } catch (error) {
-                    console.error('Controls setup failed:', error);
-                }
-            }
-
-            function setupEnvironment() {
-                try {
-                    const floor = new THREE.Mesh(
-                        new THREE.PlaneGeometry(40, 40),
-                        new THREE.MeshStandardMaterial({ 
-                            color: 0x1c2526, 
-                            roughness: 0.3, 
-                            metalness: 0.6 
-                        })
-                    );
-                    floor.rotation.x = -Math.PI / 2;
-                    floor.receiveShadow = true;
-                    this.scene.add(floor);
-
-                    const ceiling = new THREE.Mesh(
-                        new THREE.SphereGeometry(20, 32, 32, 0, Math.PI * 2, 0, Math.PI / 2),
-                        new THREE.MeshStandardMaterial({ 
-                            color: 0x3a3a4a, 
-                            roughness: 0.5, 
-                            metalness: 0.4, 
-                            transparent: true, 
-                            opacity: 0.7, 
-                            side: THREE.DoubleSide 
-                        })
-                    );
-                    ceiling.position.set(0, 8, 0);
-                    ceiling.rotation.x = Math.PI;
-                    this.scene.add(ceiling);
-
-                    const starCount = 200; // Reduced for performance
-                    const starGeometry = new THREE.BufferGeometry();
-                    const starPositions = new Float32Array(starCount * 3);
-                    for (let i = 0; i < starCount * 3; i++) {
-                        starPositions[i] = (Math.random() - 0.5) * 150;
+            if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
+              document.addEventListener('touchstart', () => {
+                DeviceOrientationEvent.requestPermission()
+                  .then(response => {
+                    if (response === 'granted') {
+                      this.setupDeviceOrientation();
                     }
-                    starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
-                    const starMaterial = new THREE.PointsMaterial({ 
-                        color: 0xaaaaaa, 
-                        size: 0.05,
-                        transparent: true,
-                        opacity: 0.8
-                    });
-                    const stars = new THREE.Points(starGeometry, starMaterial);
-                    stars.position.y = 15;
-                    this.scene.add(stars);
-                } catch (error) {
-                    console.error('Environment setup failed:', error);
-                }
+                  })
+                  .catch(error => console.error('Device orientation permission failed:', error));
+              }, { once: true });
+            } else if (window.DeviceOrientationEvent) {
+              this.setupDeviceOrientation();
             }
+          } else {
+            document.addEventListener('keydown', (event) => {
+              switch (event.code) {
+                case 'KeyW': this.move.forward = true; break;
+                case 'KeyS': this.move.backward = true; break;
+                case 'KeyA': this.move.left = true; break;
+                case 'KeyD': this.move.right = true; break;
+                case 'Escape': this.resetZoom(); break;
+              }
+            });
 
-            function setupModels() {
-                try {
-                    const loader = new GLTFLoader();
-                    const models = [
-                        {
-                            url: 'https://threejs.org/examples/models/gltf/DamagedHelmet/glTF/DamagedHelmet.gltf',
-                            position: [5, 0, -10],
-                            scale: [1.5, 1.5, 1.5],
-                            rotation: [0, Math.PI / 4, 0]
-                        },
-                        {
-                            url: 'https://threejs.org/examples/models/gltf/LeePerrySmith/LeePerrySmith.gltf',
-                            position: [-5, 3, -5],
-                            scale: [0.8, 0.8, 0.8],
-                            animate: (model) => {
-                                model.position.y = 3 + Math.sin(Date.now() * 0.001) * 0.2;
-                            }
-                        },
-                        {
-                            url: 'https://threejs.org/examples/models/gltf/CesiumMan/glTF/CesiumMan.gltf',
-                            position: [-8, 0, 0],
-                            scale: [1.2, 1.2, 1.2],
-                            rotation: [0, -Math.PI / 6, 0]
-                        }
-                    ];
+            document.addEventListener('keyup', (event) => {
+              switch (event.code) {
+                case 'KeyW': this.move.forward = false; break;
+                case 'KeyS': this.move.backward = false; break;
+                case 'KeyA': this.move.left = false; break;
+                case 'KeyD': this.move.right = false; break;
+              }
+            });
+          }
 
-                    models.forEach(({ url, position, scale, rotation, animate }) => {
-                        loader.load(
-                            url,
-                            (gltf) => {
-                                const model = gltf.scene;
-                                model.position.set(...position);
-                                model.scale.set(...scale);
-                                if (rotation) model.rotation.set(...rotation);
-                                model.traverse(child => {
-                                    if (child.isMesh) {
-                                        child.castShadow = true;
-                                        child.receiveShadow = true;
-                                    }
-                                });
-                                this.scene.add(model);
-                                if (animate) {
-                                    const animateModel = () => {
-                                        animate(model);
-                                        requestAnimationFrame(animateModel);
-                                    };
-                                    animateModel();
-                                }
-                            },
-                            undefined,
-                            (error) => console.error(`Error loading ${url}:`, error)
-                        );
-                    });
-                } catch (error) {
-                    console.error('Models setup failed:', error);
-                }
+          window.addEventListener('resize', () => {
+            try {
+              if (this.camera && this.renderer && this.cssRenderer) {
+                this.camera.aspect = window.innerWidth / window.innerHeight;
+                this.camera.updateProjectionMatrix();
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.cssRenderer.setSize(window.innerWidth, window.innerHeight);
+              }
+            } catch (error) {
+              console.error('Resize handler failed:', error);
             }
+          });
+        } catch (error) {
+          console.error('Event listeners setup failed:', error);
+        }
+      }
 
-            function setupWebViews() {
-                try {
-                    const createIframe = (src, style = {}) => {
-                        const iframe = document.createElement('iframe');
-                        iframe.src = src;
-                        Object.assign(iframe.style, {
-                            width: '800px',
-                            height: '600px',
-                            border: '0',
-                            borderRadius: '16px',
-                            boxShadow: '0 0 20px rgba(0,255,255,0.3)',
-                            ...style
-                        });
-                        return iframe;
-                    };
+      setupDeviceOrientation() {
+        try {
+          window.addEventListener('deviceorientation', (event) => {
+            if (this.zoomedObject || !this.camera) return;
+            
+            const gamma = event.gamma * (Math.PI / 180); // Left-right tilt
+            const beta = event.beta * (Math.PI / 180);  // Front-back tilt
+            
+            // Look around (yaw and pitch)
+            this.camera.rotation.y = -gamma * 0.5;
+            this.camera.rotation.x = Math.max(-Math.PI/4, Math.min(Math.PI/4, beta * 0.5 - Math.PI/6));
 
-                    this.webViews = [
-                        {
-                            iframe: createIframe('https://dexscreener.com/cronos/0x5F028F49a7443f34aeDFc19ED986c92243d98EF5?embed=1&loadChartSettings=0&chartLeftToolbar=0&chartTheme=dark&theme=dark&chartStyle=0&chartType=usd&interval=15'),
-                            position: [-12, 2.7, -12],
-                            rotation: [0, 0.3, 0],
-                            scale: 0.007,
-                            originalScale: 0.007
-                        },
-                        {
-                            iframe: createIframe('https://gopluslabs.io/token-security/25/0x9ef3fc220867f6cf5655db3d950cda67a3a92f9f', {
-                                boxShadow: '0 0 20px rgba(0,255,100,0.25)'
-                            }),
-                            position: [0, 2.7, -15],
-                            rotation: [0, 0, 0],
-                            scale: 0.007,
-                            originalScale: 0.007
-                        },
-                        {
-                            iframe: createIframe('https://v0-fork-of-matrix-quantum-terminal-g0jxgv.vercel.app/', {
-                                boxShadow: '0 0 30px rgba(0,255,150,0.7)'
-                            }),
-                            position: [12, 2.7, -12],
-                            rotation: [0, -0.3, 0],
-                            scale: 0.007,
-                            originalScale: 0.007
-                        },
-                        {
-                            iframe: createIframe('https://v0-the-orb-sigma.vercel.app/', {
-                                boxShadow: '0 0 30px rgba(100,100,255,0.7)'
-                            }),
-                            position: [-6, 4.5, -14],
-                            rotation: [0, 0.15, 0],
-                            scale: 0.007,
-                            originalScale: 0.007
-                        },
-                        {
-                            iframe: createIframe('https://www.dextools.io/widget-chart/en/cronos/pe-light/0x5f028f49a7443f34aedfc19ed986c92243d98ef5?theme=light&chartType=2&chartResolution=30&drawingToolbars=false'),
-                            position: [6, 4.5, -14],
-                            rotation: [0, -0.15, 0],
-                            scale: 0.007,
-                            originalScale: 0.007
-                        }
-                    ];
+            // VR-like strafing based on tilt
+            const tiltThreshold = 10 * (Math.PI / 180); // 10 degrees for sensitivity
+            this.tiltVelocity = Math.abs(gamma) > tiltThreshold ? -gamma * 0.5 : 0;
+          });
+        } catch (error) {
+          console.error('Device orientation setup failed:', error);
+        }
+      }
 
-                    this.webViewObjects = this.webViews.map(({ iframe, position, rotation, scale }) => {
-                        const cssObject = new CSS3DObject(iframe);
-                        cssObject.position.set(...position);
-                        cssObject.rotation.set(...rotation);
-                        cssObject.scale.set(scale, scale, scale);
-                        this.scene.add(cssObject);
-                        return cssObject;
-                    });
-                } catch (error) {
-                    console.error('Web views setup failed:', error);
-                }
-            }
+      animate() {
+        try {
+          requestAnimationFrame(() => this.animate());
+          const delta = this.clock.getDelta();
 
-            function zoomToWebView(cssObject) {
-                try {
-                    if (this.zoomedObject === cssObject) {
-                        this.resetZoom();
-                        return;
-                    }
+          if (!this.zoomedObject) {
+            this.moveCamera(delta);
+          }
 
-                    this.originalCameraPos.copy(this.camera.position);
-                    const targetPos = cssObject.position.clone();
-                    targetPos.z += 2;
-                    targetPos.y = cssObject.position.y;
+          if (this.renderer && this.cssRenderer && this.scene && this.camera) {
+            this.renderer.render(this.scene, this.camera);
+            this.cssRenderer.render(this.scene, this.camera);
+          }
+        } catch (error) {
+          console.error('Animation loop failed:', error);
+        }
+      }
+    }
 
-                    this.controls.enabled = false;
-                    this.zoomedObject = cssObject;
-
-                    cssObject.scale.setScalar(cssObject.scale.x * 1.5);
-
-                    const duration = 500;
-                    const startTime = Date.now();
-                    const startPos = this.camera.position.clone();
-                    
-                    const animateZoom = () => {
-                        const elapsed = Date.now() - startTime;
-                        const t = Math.min(elapsed / duration, 1);
-                        
-                        this.camera.position.lerpVectors(startPos, targetPos, t);
-                        
-                        if (t < 1) {
-                            requestAnimationFrame(animateZoom);
-                        } else {
-                            cssObject.element.style.pointerEvents = 'auto';
-                        }
-                    };
-                    
-                    animateZoom();
-                } catch (error) {
-                    console.error('Zoom to web view failed:', error);
-                }
-            }
-
-            function resetZoom() {
-                try {
-                    if (!this.zoomedObject) return;
-
-                    const duration = 500;
-                    const startTime = Date.now();
-                    const startPos = this.camera.position.clone();
-                    const cssObject = this.zoomedObject;
-
-                    cssObject.element.style.pointerEvents = 'none';
-                    cssObject.scale.setScalar(cssObject.scale.x / 1.5);
-
-                    const animateReset = () => {
-                        const elapsed = Date.now() - startTime;
-                        const t = Math.min(elapsed / duration, 1);
-                        
-                        this.camera.position.lerpVectors(startPos, this.originalCameraPos, t);
-                        
-                        if (t < 1) {
-                            requestAnimationFrame(animateReset);
-                        } else {
-                            this.controls.enabled = true;
-                            this.zoomedObject = null;
-                        }
-                    };
-                    
-                    animateReset();
-                } catch (error) {
-                    console.error('Reset zoom failed:', error);
-                }
-            }
-
-            function moveCamera(direction) {
-                try {
-                    const position = this.camera.position;
-                    switch (direction) {
-                        case 'up':
-                            this.camera.position.set(position.x, position.y, position.z - this.moveSpeed);
-                            break;
-                        case 'down':
-                            this.camera.position.set(position.x, position.y, position.z + this.moveSpeed);
-                            break;
-                        case 'left':
-                            this.camera.position.set(position.x - this.moveSpeed, position.y, position.z);
-                            break;
-                        case 'right':
-                            this.camera.position.set(position.x + this.moveSpeed, position.y, position.z);
-                            break;
-                    }
-                } catch (error) {
-                    console.error('Move camera failed:', error);
-                }
-            }
-
-            function setupEventListeners() {
-                try {
-                    document.addEventListener('click', (event) => {
-                        if (this.isMobile || this.zoomedObject) return;
-                        
-                        this.controls.lock();
-                        
-                        this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
-                        const intersects = this.raycaster.intersectObjects(this.webViewObjects || []);
-                        
-                        if (intersects.length > 0) {
-                            this.zoomToWebView(intersects[0].object);
-                        }
-                    });
-
-                    if (this.isMobile) {
-                        document.addEventListener('touchstart', (event) => {
-                            if (event.target.classList.contains('control-button')) return;
-                            
-                            if (this.zoomedObject) {
-                                this.resetZoom();
-                                return;
-                            }
-                            
-                            const touch = event.touches[0];
-                            this.raycaster.setFromCamera(new THREE.Vector2(
-                                (touch.clientX / window.innerWidth) * 2 - 1,
-                                -(touch.clientY / window.innerHeight) * 2 + 1
-                            ), this.camera);
-                            
-                            const intersects = this.raycaster.intersectObjects(this.webViewObjects || []);
-                            
-                            if (intersects.length > 0) {
-                                this.zoomToWebView(intersects[0].object);
-                            }
-                        });
-                    }
-                } catch (error) {
-                    console.error('Event listeners setup failed:', error);
-                }
-            }
-        </script>
-    </a-scene>
-
-    <!-- Mobile Control Buttons -->
-    <div id="up" class="control-button">↑</div>
-    <div id="down" class="control-button">↓</div>
-    <div id="left" class="control-button">←</div>
-    <div id="right" class="control-button">→</div>
-    
-    <!-- DEXTools Widget -->
-    <div style="position: absolute; bottom: 10px; left: 10px; z-index: 10;">
-        <iframe id="dextools-widget"
-            title="DEXTools Trading Chart"
-            width="200" height="300"
-            src="https://www.dextools.io/widget-chart/en/cronos/pe-light/0x5f028f49a7443f34aedfc19ed986c92243d98ef5?theme=light&chartType=2&chartResolution=30&drawingToolbars=false"></iframe>
-    </div>
+    try {
+      new SceneManager();
+    } catch (error) {
+      console.error('SceneManager initialization failed:', error);
+    }
+  </script>
 </body>
 </html>
