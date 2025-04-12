@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Immersive 3D Dashboard</title>
   <style>
     body { 
@@ -46,6 +46,10 @@
       font-size: 24px;
       cursor: pointer;
       touch-action: manipulation;
+      transition: background 0.2s;
+    }
+    .control-button:active {
+      background: rgba(255, 255, 255, 0.4);
     }
     @media (max-width: 768px) {
       #mobile-controls {
@@ -58,7 +62,7 @@
   </style>
 </head>
 <body>
-  <div id="info">Desktop: WASD: Move • Mouse: Look • Click: Lock Controls<br>Mobile: Buttons: Move • Tilt: Look • Tap: Interact</div>
+  <div id="info">Desktop: WASD: Move • Mouse: Look • Click: Interact<br>Mobile: Buttons: Move • Tilt: Look • Tap: Interact</div>
   <div id="mobile-controls">
     <button class="control-button" id="move-forward">↑</button>
     <button class="control-button" id="move-backward">↓</button>
@@ -350,10 +354,8 @@
         this.controls.enabled = false;
         this.zoomedObject = cssObject;
 
-        // Scale up
         cssObject.scale.setScalar(cssObject.scale.x * 1.5);
 
-        // Smooth transition
         const duration = 500;
         const startTime = Date.now();
         const startPos = this.camera.position.clone();
@@ -418,17 +420,14 @@
 
         if (this.isMobile) {
           document.addEventListener('touchstart', (event) => {
+            if (event.target.classList.contains('control-button')) return;
+            
             if (this.zoomedObject) {
               this.resetZoom();
               return;
             }
             
             const touch = event.touches[0];
-            const mouseEvent = new MouseEvent('click', {
-              clientX: touch.clientX,
-              clientY: touch.clientY
-            });
-            
             this.raycaster.setFromCamera(new THREE.Vector2(
               (touch.clientX / window.innerWidth) * 2 - 1,
               -(touch.clientY / window.innerHeight) * 2 + 1
@@ -440,33 +439,7 @@
               this.zoomToWebView(intersects[0].object);
             }
           });
-             // Movement controls
-            const camera = document.querySelector('[camera]');
-            const moveSpeed = 0.1;
 
-            function moveCamera(direction) {
-                const position = camera.getAttribute('position');
-                switch (direction) {
-                    case 'up':
-                        camera.setAttribute('position', { x: position.x, y: position.y, z: position.z - moveSpeed });
-                        break;
-                    case 'down':
-                        camera.setAttribute('position', { x: position.x, y: position.y, z: position.z + moveSpeed });
-                        break;
-                    case 'left':
-                        camera.setAttribute('position', { x: position.x - moveSpeed, y: position.y, z: position.z });
-                        break;
-                    case 'right':
-                        camera.setAttribute('position', { x: position.x + moveSpeed, y: position.y, z: position.z });
-                        break;
-                }
-            }
-
-            document.getElementById('up').addEventListener('click', () => moveCamera('up'));
-            document.getElementById('down').addEventListener('click', () => moveCamera('down'));
-            document.getElementById('left').addEventListener('click', () => moveCamera('left'));
-            document.getElementById('right').addEventListener('click', () => moveCamera('right'));
-        
           // Mobile controls
           const buttons = {
             'move-forward': 'forward',
@@ -477,25 +450,30 @@
 
           Object.entries(buttons).forEach(([id, direction]) => {
             const button = document.getElementById(id);
-            button.addEventListener('touchstart', () => {
+            button.addEventListener('touchstart', (e) => {
+              e.preventDefault();
               this.move[direction] = true;
             });
-            button.addEventListener('touchend', () => {
+            button.addEventListener('touchend', (e) => {
+              e.preventDefault();
               this.move[direction] = false;
             });
           });
 
-          // Device motion controls
-          if (window.DeviceOrientationEvent) {
-            window.addEventListener('deviceorientation', (event) => {
-              if (this.zoomedObject) return;
-              
-              const gamma = event.gamma * (Math.PI / 180); // Left-right tilt
-              const beta = event.beta * (Math.PI / 180); // Front-back tilt
-              
-              this.camera.rotation.y = -gamma * 0.5;
-              this.camera.rotation.x = Math.max(-Math.PI/4, Math.min(Math.PI/4, beta * 0.5 - Math.PI/6));
-            });
+          // Device orientation for looking around
+          if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
+            // iOS 13+ requires permission
+            document.addEventListener('touchstart', () => {
+              DeviceOrientationEvent.requestPermission()
+                .then(response => {
+                  if (response === 'granted') {
+                    this.setupDeviceOrientation();
+                  }
+                })
+                .catch(console.error);
+            }, { once: true });
+          } else if (window.DeviceOrientationEvent) {
+            this.setupDeviceOrientation();
           }
         } else {
           document.addEventListener('keydown', (event) => {
@@ -526,6 +504,18 @@
         });
       }
 
+      setupDeviceOrientation() {
+        window.addEventListener('deviceorientation', (event) => {
+          if (this.zoomedObject) return;
+          
+          const gamma = event.gamma * (Math.PI / 180); // Left-right tilt
+          const beta = event.beta * (Math.PI / 180);  // Front-back tilt
+          
+          this.camera.rotation.y = -gamma * 0.5; // Yaw (horizontal look)
+          this.camera.rotation.x = Math.max(-Math.PI/4, Math.min(Math.PI/4, beta * 0.5 - Math.PI/6)); // Pitch (vertical look)
+        });
+      }
+
       animate() {
         requestAnimationFrame(() => this.animate());
         const delta = this.clock.getDelta();
@@ -545,8 +535,8 @@
             this.velocity.x -= this.direction.x * this.speed * delta;
           }
 
-          this.controls.moveRight(-this.velocity.x * delta);
-          this.controls.moveForward(-this.velocity.z * delta);
+          this.controls.moveRight(this.velocity.x * delta); // Side-to-side movement
+          this.controls.moveForward(-this.velocity.z * delta); // Forward-backward movement
         }
 
         this.renderer.render(this.scene, this.camera);
