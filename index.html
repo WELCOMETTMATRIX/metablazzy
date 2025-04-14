@@ -10,50 +10,77 @@
       overflow: hidden; 
       background: #0a0a1a;
       touch-action: none;
+      font-family: 'Inter', -apple-system, sans-serif;
     }
     #info {
       position: absolute;
       top: 10px;
       left: 10px;
       color: #ffffff;
-      font-family: 'Inter', -apple-system, sans-serif;
       font-size: 14px;
       background: rgba(0, 0, 0, 0.7);
       padding: 8px 12px;
       border-radius: 6px;
       user-select: none;
       z-index: 10;
+      backdrop-filter: blur(4px);
+      transition: opacity 0.3s;
+    }
+    #loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #ffffff;
+      font-size: 16px;
+      background: rgba(0, 0, 0, 0.8);
+      padding: 10px 20px;
+      border-radius: 8px;
+      z-index: 100;
+      display: none;
     }
     canvas {
       display: block;
     }
-    #mobile-controls {
+    #mobile-controls, #look-controls {
       position: fixed;
       bottom: 20px;
-      left: 50%;
-      transform: translateX(-50%);
       display: none;
       z-index: 20;
     }
-    .control-button {
-      background: rgba(255, 255, 255, 0.2);
-      border: none;
+    #mobile-controls {
+      left: 20px;
+    }
+    #look-controls {
+      right: 20px;
+    }
+    .joystick-container {
+      position: relative;
+      width: 120px;
+      height: 120px;
+      background: rgba(255, 255, 255, 0.1);
       border-radius: 50%;
+      touch-action: none;
+      user-select: none;
+    }
+    .joystick {
+      position: absolute;
       width: 60px;
       height: 60px;
-      margin: 0 10px;
-      color: white;
-      font-size: 24px;
-      cursor: pointer;
-      touch-action: manipulation;
-      transition: background 0.2s;
+      background: rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      top: 30px;
+      left: 30px;
+      transition: background 0.2s, opacity 0.2s;
+      opacity: 0.7;
     }
-    .control-button:active {
-      background: rgba(255, 255, 255, 0.4);
+    .joystick.active {
+      background: rgba(255, 255, 255, 0.5);
+      opacity: 1;
     }
     @media (max-width: 768px) {
-      #mobile-controls {
-        display: flex;
+      #mobile-controls, #look-controls {
+        display: block;
       }
       #info {
         font-size: 12px;
@@ -62,10 +89,17 @@
   </style>
 </head>
 <body>
-  <div id="info">Desktop: WASD: Move • Mouse: Look • Click: Interact<br>Mobile: Buttons: Forward/Backward • Swipe: Strafe • Tilt:FULook • Tap: Interact</div>
+  <div id="info">Desktop: WASD: Move • Mouse: Look • Click: Zoom • Double-Click/Esc: Reset<br>Mobile: Joystick: Move • Look Joystick: Rotate • Tap: Zoom • Double-Tap: Reset</div>
+  <div id="loading">Loading Models...</div>
   <div id="mobile-controls">
-    <button class="control-button" id="move-forward">↑</button>
-    <button class="control-button" id="move-backward">↓</button>
+    <div class="joystick-container" id="move-joystick">
+      <div class="joystick"></div>
+    </div>
+  </div>
+  <div id="look-controls">
+    <div class="joystick-container" id="look-joystick">
+      <div class="joystick"></div>
+    </div>
   </div>
   <script type="importmap">
     {
@@ -88,16 +122,23 @@
         this.renderer = null;
         this.cssRenderer = null;
         this.controls = null;
-        this.move = { forward: false, backward: false, left: false, right: false };
-        this.moveSpeed = 0.3; // Increased for faster movement
+        this.move = { forward: 0, backward: 0, left: 0, right: 0 };
+        this.moveSpeed = 0.6;
         this.clock = new THREE.Clock();
         this.raycaster = new THREE.Raycaster();
         this.isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
         this.zoomedObject = null;
         this.originalCameraPos = new THREE.Vector3();
-        this.touchStrafeVelocity = 0; // For touchscreen strafing
+        this.touchStrafeVelocity = 0;
         this.touchStartX = null;
-        this.floorY = 1.6; // Lock player to floor height
+        this.floorY = 1.6;
+        this.velocity = new THREE.Vector3();
+        this.acceleration = 20;
+        this.friction = 8;
+        this.moveJoystick = { active: false, vector: new THREE.Vector2() };
+        this.lookJoystick = { active: false, vector: new THREE.Vector2() };
+        this.webViewObjects = [];
+        this.loadingModels = 0;
         this.init();
       }
 
@@ -120,13 +161,17 @@
       }
 
       setupCamera() {
-        this.camera = new THREE.PerspectiveCamera(
-          75,
-          window.innerWidth / window.innerHeight,
-          0.1,
-          1000
-        );
-        this.camera.position.set(0, this.floorY, 8);
+        try {
+          this.camera = new THREE.PerspectiveCamera(
+            75,
+            window.innerWidth / window.innerHeight,
+            0.1,
+            1000
+          );
+          this.camera.position.set(0, this.floorY, 8);
+        } catch (error) {
+          console.error('Camera setup failed:', error);
+        }
       }
 
       setupRenderers() {
@@ -136,16 +181,19 @@
             powerPreference: 'high-performance',
             alpha: true 
           });
-          this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+          this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // Optimized for mobile
           this.renderer.setSize(window.innerWidth, window.innerHeight);
           this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
           this.renderer.toneMappingExposure = 1.0;
+          this.renderer.shadowMap.enabled = true;
+          this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
           document.body.appendChild(this.renderer.domElement);
 
           this.cssRenderer = new CSS3DRenderer();
           this.cssRenderer.setSize(window.innerWidth, window.innerHeight);
           this.cssRenderer.domElement.style.position = 'absolute';
           this.cssRenderer.domElement.style.top = '0';
+          this.cssRenderer.domElement.style.pointerEvents = 'none'; // Prevent CSS renderer from blocking
           document.body.appendChild(this.cssRenderer.domElement);
         } catch (error) {
           console.error('Renderer setup failed:', error);
@@ -221,57 +269,77 @@
       }
 
       setupModels() {
-        const loader = new GLTFLoader();
-        const models = [
-          {
-            url: 'https://threejs.org/examples/models/gltf/DamagedHelmet/glTF/DamagedHelmet.gltf',
-            position: [5, 0, -10],
-            scale: [1.5, 1.5, 1.5],
-            rotation: [0, Math.PI / 4, 0]
-          },
-          {
-            url: 'https://threejs.org/examples/models/gltf/LeePerrySmith/LeePerrySmith.gltf',
-            position: [-5, 3, -5],
-            scale: [0.8, 0.8, 0.8],
-            animate: (model) => {
-              model.position.y = 3 + Math.sin(Date.now() * 0.001) * 0.2;
-            }
-          },
-          {
-            url: 'https://threejs.org/examples/models/gltf/CesiumMan/glTF/CesiumMan.gltf',
-            position: [-8, 0, 0],
-            scale: [1.2, 1.2, 1.2],
-            rotation: [0, -Math.PI / 6, 0]
-          }
-        ];
+        try {
+          const loader = new GLTFLoader();
+          const loadingElement = document.getElementById('loading');
+          loadingElement.style.display = 'block';
 
-        models.forEach(({ url, position, scale, rotation, animate }) => {
-          loader.load(
-            url,
-            (gltf) => {
-              const model = gltf.scene;
-              model.position.set(...position);
-              model.scale.set(...scale);
-              if (rotation) model.rotation.set(...rotation);
-              model.traverse(child => {
-                if (child.isMesh) {
-                  child.castShadow = true;
-                  child.receiveShadow = true;
-                }
-              });
-              this.scene.add(model);
-              if (animate) {
-                const animateModel = () => {
-                  animate(model);
-                  requestAnimationFrame(animateModel);
-                };
-                animateModel();
+          const models = [
+            {
+              url: 'https://threejs.org/examples/models/gltf/DamagedHelmet/glTF/DamagedHelmet.gltf',
+              position: [5, 0, -10],
+              scale: [1.5, 1.5, 1.5],
+              rotation: [0, Math.PI / 4, 0]
+            },
+            {
+              url: 'https://threejs.org/examples/models/gltf/LeePerrySmith/LeePerrySmith.gltf',
+              position: [-5, 3, -5],
+              scale: [0.8, 0.8, 0.8],
+              animate: (model) => {
+                model.position.y = 3 + Math.sin(Date.now() * 0.001) * 0.2;
               }
             },
-            undefined,
-            (error) => console.error(`Error loading ${url}:`, error)
-          );
-        });
+            {
+              url: 'https://threejs.org/examples/models/gltf/CesiumMan/glTF/CesiumMan.gltf',
+              position: [-8, 0, 0],
+              scale: [1.2, 1.2, 1.2],
+              rotation: [0, -Math.PI / 6, 0]
+            }
+          ];
+
+          this.loadingModels = models.length;
+
+          models.forEach(({ url, position, scale, rotation, animate }) => {
+            loader.load(
+              url,
+              (gltf) => {
+                const model = gltf.scene;
+                model.position.set(...position);
+                model.scale.set(...scale);
+                if (rotation) model.rotation.set(...rotation);
+                model.traverse(child => {
+                  if (child.isMesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                  }
+                });
+                this.scene.add(model);
+                if (animate) {
+                  const animateModel = () => {
+                    animate(model);
+                    requestAnimationFrame(animateModel);
+                  };
+                  animateModel();
+                }
+                this.loadingModels--;
+                if (this.loadingModels === 0) {
+                  loadingElement.style.display = 'none';
+                }
+              },
+              undefined,
+              (error) => {
+                console.error(`Error loading model ${url}:`, error);
+                this.loadingModels--;
+                if (this.loadingModels === 0) {
+                  loadingElement.style.display = 'none';
+                }
+              }
+            );
+          });
+        } catch (error) {
+          console.error('Models setup failed:', error);
+          document.getElementById('loading').style.display = 'none';
+        }
       }
 
       setupWebViews() {
@@ -285,8 +353,12 @@
               border: '0',
               borderRadius: '16px',
               boxShadow: '0 0 20px rgba(0,255,255,0.3)',
+              pointerEvents: 'none',
+              transition: 'box-shadow 0.3s',
               ...style
             });
+            iframe.setAttribute('scrolling', 'yes');
+            iframe.setAttribute('allow', 'autoplay; fullscreen');
             return iframe;
           };
 
@@ -357,6 +429,10 @@
           directionalLight.castShadow = true;
           directionalLight.shadow.mapSize.set(1024, 1024);
           this.scene.add(directionalLight);
+
+          const pointLight = new THREE.PointLight(0x88ccff, 0.4, 20);
+          pointLight.position.set(0, 5, -10);
+          this.scene.add(pointLight);
         } catch (error) {
           console.error('Lighting setup failed:', error);
         }
@@ -365,7 +441,7 @@
       zoomToWebView(cssObject) {
         try {
           if (this.zoomedObject === cssObject) {
-            this.resetZoom();
+            cssObject.element.style.pointerEvents = 'auto';
             return;
           }
 
@@ -378,24 +454,28 @@
           this.zoomedObject = cssObject;
 
           cssObject.scale.setScalar(cssObject.scale.x * 1.5);
+          cssObject.element.style.boxShadow = '0 0 30px rgba(0,255,255,0.5)';
 
           const duration = 500;
           const startTime = Date.now();
           const startPos = this.camera.position.clone();
-          
+
+          const easeOutQuad = t => 1 - (1 - t) * (1 - t);
+
           const animateZoom = () => {
             const elapsed = Date.now() - startTime;
             const t = Math.min(elapsed / duration, 1);
-            
-            this.camera.position.lerpVectors(startPos, targetPos, t);
-            
+            const easedT = easeOutQuad(t);
+
+            this.camera.position.lerpVectors(startPos, targetPos, easedT);
+
             if (t < 1) {
               requestAnimationFrame(animateZoom);
             } else {
               cssObject.element.style.pointerEvents = 'auto';
             }
           };
-          
+
           animateZoom();
         } catch (error) {
           console.error('Zoom to web view failed:', error);
@@ -412,14 +492,18 @@
           const cssObject = this.zoomedObject;
 
           cssObject.element.style.pointerEvents = 'none';
+          cssObject.element.style.boxShadow = this.webViews.find(w => w.iframe === cssObject.element).iframe.style.boxShadow;
           cssObject.scale.setScalar(cssObject.scale.x / 1.5);
+
+          const easeOutQuad = t => 1 - (1 - t) * (1 - t);
 
           const animateReset = () => {
             const elapsed = Date.now() - startTime;
             const t = Math.min(elapsed / duration, 1);
-            
-            this.camera.position.lerpVectors(startPos, this.originalCameraPos, t);
-            
+            const easedT = easeOutQuad(t);
+
+            this.camera.position.lerpVectors(startPos, this.originalCameraPos, easedT);
+
             if (t < 1) {
               requestAnimationFrame(animateReset);
             } else {
@@ -427,7 +511,7 @@
               this.zoomedObject = null;
             }
           };
-          
+
           animateReset();
         } catch (error) {
           console.error('Reset zoom failed:', error);
@@ -437,78 +521,183 @@
       moveCamera(delta) {
         if (!this.camera) return;
 
-        const velocity = new THREE.Vector3();
         const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
         const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
 
-        // Forward/backward with higher speed
-        if (this.move.forward) velocity.add(forward.clone().multiplyScalar(1.5)); // 50% faster forward/back
-        if (this.move.backward) velocity.sub(forward.clone().multiplyScalar(1.5));
-
-        // Side-to-side movement (desktop or mobile touch)
-        if (this.move.left || this.touchStrafeVelocity < -0.1) {
-          velocity.sub(right.clone().multiplyScalar(Math.abs(this.touchStrafeVelocity) || 1));
+        const targetVelocity = new THREE.Vector3();
+        if (this.move.forward || this.moveJoystick.vector.y > 0.1) {
+          targetVelocity.add(forward.clone().multiplyScalar(this.move.forward || this.moveJoystick.vector.y));
         }
-        if (this.move.right || this.touchStrafeVelocity > 0.1) {
-          velocity.add(right.clone().multiplyScalar(Math.abs(this.touchStrafeVelocity) || 1));
+        if (this.move.backward || this.moveJoystick.vector.y < -0.1) {
+          targetVelocity.sub(forward.clone().multiplyScalar(this.move.backward || -this.moveJoystick.vector.y));
+        }
+        if (this.move.left || this.moveJoystick.vector.x < -0.1 || this.touchStrafeVelocity < -0.1) {
+          targetVelocity.sub(right.clone().multiplyScalar(this.move.left || -this.moveJoystick.vector.x || Math.abs(this.touchStrafeVelocity)));
+        }
+        if (this.move.right || this.moveJoystick.vector.x > 0.1 || this.touchStrafeVelocity > 0.1) {
+          targetVelocity.add(right.clone().multiplyScalar(this.move.right || this.moveJoystick.vector.x || Math.abs(this.touchStrafeVelocity)));
         }
 
-        velocity.multiplyScalar(this.moveSpeed * delta);
-        this.camera.position.add(velocity);
-        this.camera.position.y = this.floorY; // Lock to floor
+        targetVelocity.multiplyScalar(this.moveSpeed);
+        this.velocity.lerp(targetVelocity, this.acceleration * delta);
+
+        if (targetVelocity.length() < 0.01) {
+          this.velocity.lerp(new THREE.Vector3(), this.friction * delta);
+        }
+
+        this.camera.position.add(this.velocity.clone().multiplyScalar(delta));
+        this.camera.position.y = this.floorY;
       }
 
       setupEventListeners() {
         try {
-          document.addEventListener('click', (event) => {
-            if (this.isMobile || this.zoomedObject) return;
-            
-            this.controls.lock();
-            
+          let lastTap = 0;
+          const doubleTapThreshold = 300;
+
+          const handleInteraction = (event, isTouch = false) => {
+            const currentTime = Date.now();
+            const isDoubleTap = currentTime - lastTap < doubleTapThreshold;
+            lastTap = currentTime;
+
+            if (isTouch) {
+              event.preventDefault();
+            }
+
             if (this.webViewObjects) {
-              this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
+              const pointer = isTouch
+                ? new THREE.Vector2(
+                    (event.touches[0].clientX / window.innerWidth) * 2 - 1,
+                    -(event.touches[0].clientY / window.innerHeight) * 2 + 1
+                  )
+                : new THREE.Vector2(0, 0);
+
+              this.raycaster.setFromCamera(pointer, this.camera);
               const intersects = this.raycaster.intersectObjects(this.webViewObjects);
-              
+
               if (intersects.length > 0) {
-                this.zoomToWebView(intersects[0].object);
+                const cssObject = intersects[0].object;
+                if (isDoubleTap || (this.zoomedObject === cssObject && isTouch)) {
+                  if (this.zoomedObject) {
+                    this.resetZoom();
+                  }
+                } else {
+                  this.zoomToWebView(cssObject);
+                }
+              } else if (this.zoomedObject && (isDoubleTap || !isTouch)) {
+                this.resetZoom();
               }
             }
-          });
+
+            if (!isTouch && !this.isMobile && !this.zoomedObject) {
+              this.controls.lock();
+            }
+          };
+
+          // Webview hover effect (desktop only)
+          if (!this.isMobile) {
+            document.addEventListener('mousemove', (event) => {
+              if (this.zoomedObject) return;
+              const pointer = new THREE.Vector2(
+                (event.clientX / window.innerWidth) * 2 - 1,
+                -(event.clientY / window.innerHeight) * 2 + 1
+              );
+              this.raycaster.setFromCamera(pointer, this.camera);
+              const intersects = this.raycaster.intersectObjects(this.webViewObjects);
+              this.webViewObjects.forEach(obj => {
+                obj.scale.setScalar(obj === this.zoomedObject ? obj.scale.x : this.webViews.find(w => w.iframe === obj.element).scale);
+              });
+              if (intersects.length > 0) {
+                intersects[0].object.scale.setScalar(intersects[0].object.scale.x * 1.05);
+              }
+            });
+          }
 
           if (this.isMobile) {
-            // Touch events for strafing
-            document.addEventListener('touchstart', (event) => {
-              if (event.target.classList.contains('control-button')) return;
-              
-              if (this.zoomedObject) {
-                this.resetZoom();
-                return;
-              }
-              
-              const touch = event.touches[0];
-              this.touchStartX = touch.clientX;
+            const moveJoystickContainer = document.getElementById('move-joystick');
+            const moveJoystick = moveJoystickContainer.querySelector('.joystick');
+            const lookJoystickContainer = document.getElementById('look-joystick');
+            const lookJoystick = lookJoystickContainer.querySelector('.joystick');
 
-              if (this.webViewObjects) {
-                this.raycaster.setFromCamera(new THREE.Vector2(
-                  (touch.clientX / window.innerWidth) * 2 - 1,
-                  -(touch.clientY / window.innerHeight) * 2 + 1
-                ), this.camera);
-                
-                const intersects = this.raycaster.intersectObjects(this.webViewObjects);
-                
-                if (intersects.length > 0) {
-                  this.zoomToWebView(intersects[0].object);
-                }
+            const handleJoystick = (container, joystick, joystickState, touch, isMoveJoystick) => {
+              const rect = container.getBoundingClientRect();
+              const centerX = rect.left + rect.width / 2;
+              const centerY = rect.top + rect.height / 2;
+              const touchX = touch.clientX;
+              const touchY = touch.clientY;
+              const dx = touchX - centerX;
+              const dy = touchY - centerY;
+              const distance = Math.sqrt(dx * dx + dy * dy);
+              const maxDistance = rect.width / 2 - joystick.offsetWidth / 2;
+              let offsetX, offsetY;
+
+              if (distance > maxDistance) {
+                const angle = Math.atan2(dy, dx);
+                offsetX = Math.cos(angle) * maxDistance;
+                offsetY = Math.sin(angle) * maxDistance;
+              } else {
+                offsetX = dx;
+                offsetY = dy;
               }
+
+              joystick.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
+              joystick.classList.add('active');
+
+              joystickState.active = true;
+              joystickState.vector.set(offsetX / maxDistance, -offsetY / maxDistance);
+            };
+
+            const resetJoystick = (joystick, joystickState) => {
+              joystick.style.transform = 'translate(0, 0)';
+              joystick.classList.remove('active');
+              joystickState.active = false;
+              joystickState.vector.set(0, 0);
+            };
+
+            moveJoystickContainer.addEventListener('touchstart', (e) => {
+              e.preventDefault();
+              const touch = e.touches[0];
+              handleJoystick(moveJoystickContainer, moveJoystick, this.moveJoystick, touch, true);
+            });
+
+            moveJoystickContainer.addEventListener('touchmove', (e) => {
+              e.preventDefault();
+              const touch = e.touches[0];
+              handleJoystick(moveJoystickContainer, moveJoystick, this.moveJoystick, touch, true);
+            });
+
+            moveJoystickContainer.addEventListener('touchend', (e) => {
+              e.preventDefault();
+              resetJoystick(moveJoystick, this.moveJoystick);
+            });
+
+            lookJoystickContainer.addEventListener('touchstart', (e) => {
+              e.preventDefault();
+              const touch = e.touches[0];
+              handleJoystick(lookJoystickContainer, lookJoystick, this.lookJoystick, touch, false);
+            });
+
+            lookJoystickContainer.addEventListener('touchmove', (e) => {
+              e.preventDefault();
+              const touch = e.touches[0];
+              handleJoystick(lookJoystickContainer, lookJoystick, this.lookJoystick, touch, false);
+            });
+
+            lookJoystickContainer.addEventListener('touchend', (e) => {
+              e.preventDefault();
+              resetJoystick(lookJoystick, this.lookJoystick);
+            });
+
+            document.addEventListener('touchstart', (event) => {
+              if (event.target.closest('.joystick-container')) return;
+              handleInteraction(event, true);
             });
 
             document.addEventListener('touchmove', (event) => {
-              if (this.zoomedObject || this.touchStartX === null) return;
-              
-              const touch = event.touches[0];
-              const deltaX = touch.clientX - this.touchStartX;
-              this.touchStrafeVelocity = deltaX * 0.01; // Scale for smooth strafing
-              this.touchStartX = touch.clientX;
+              if (this.zoomedObject && !event.target.closest('.joystick-container')) {
+                // Allow iframe scrolling
+              } else if (!event.target.closest('.joystick-container')) {
+                event.preventDefault();
+              }
             });
 
             document.addEventListener('touchend', () => {
@@ -516,29 +705,6 @@
               this.touchStartX = null;
             });
 
-            // Forward/backward buttons
-            const forwardButton = document.getElementById('move-forward');
-            const backwardButton = document.getElementById('move-backward');
-            if (forwardButton && backwardButton) {
-              forwardButton.addEventListener('touchstart', (e) => {
-                e.preventDefault();
-                this.move.forward = true;
-              });
-              forwardButton.addEventListener('touchend', (e) => {
-                e.preventDefault();
-                this.move.forward = false;
-              });
-              backwardButton.addEventListener('touchstart', (e) => {
-                e.preventDefault();
-                this.move.backward = true;
-              });
-              backwardButton.addEventListener('touchend', (e) => {
-                e.preventDefault();
-                this.move.backward = false;
-              });
-            }
-
-            // Device orientation for looking
             if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
               document.addEventListener('touchstart', () => {
                 DeviceOrientationEvent.requestPermission()
@@ -553,22 +719,26 @@
               this.setupDeviceOrientation();
             }
           } else {
+            document.addEventListener('click', (event) => {
+              handleInteraction(event, false);
+            });
+
             document.addEventListener('keydown', (event) => {
               switch (event.code) {
-                case 'KeyW': this.move.forward = true; break;
-                case 'KeyS': this.move.backward = true; break;
-                case 'KeyA': this.move.left = true; break;
-                case 'KeyD': this.move.right = true; break;
+                case 'KeyW': this.move.forward = 1; break;
+                case 'KeyS': this.move.backward = 1; break;
+                case 'KeyA': this.move.left = 1; break;
+                case 'KeyD': this.move.right = 1; break;
                 case 'Escape': this.resetZoom(); break;
               }
             });
 
             document.addEventListener('keyup', (event) => {
               switch (event.code) {
-                case 'KeyW': this.move.forward = false; break;
-                case 'KeyS': this.move.backward = false; break;
-                case 'KeyA': this.move.left = false; break;
-                case 'KeyD': this.move.right = false; break;
+                case 'KeyW': this.move.forward = 0; break;
+                case 'KeyS': this.move.backward = 0; break;
+                case 'KeyA': this.move.left = 0; break;
+                case 'KeyD': this.move.right = 0; break;
               }
             });
           }
@@ -585,6 +755,17 @@
               console.error('Resize handler failed:', error);
             }
           });
+
+          window.addEventListener('orientationchange', () => {
+            setTimeout(() => {
+              if (this.camera && this.renderer && this.cssRenderer) {
+                this.camera.aspect = window.innerWidth / window.innerHeight;
+                this.camera.updateProjectionMatrix();
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.cssRenderer.setSize(window.innerWidth, window.innerHeight);
+              }
+            }, 100);
+          });
         } catch (error) {
           console.error('Event listeners setup failed:', error);
         }
@@ -595,10 +776,9 @@
           window.addEventListener('deviceorientation', (event) => {
             if (this.zoomedObject || !this.camera) return;
             
-            const gamma = event.gamma * (Math.PI / 180); // Left-right tilt
-            const beta = event.beta * (Math.PI / 180);  // Front-back tilt
+            const gamma = event.gamma * (Math.PI / 180);
+            const beta = event.beta * (Math.PI / 180);
             
-            // Look around (yaw and pitch)
             this.camera.rotation.y = -gamma * 0.5;
             this.camera.rotation.x = Math.max(-Math.PI/4, Math.min(Math.PI/4, beta * 0.5 - Math.PI/6));
           });
@@ -610,10 +790,14 @@
       animate() {
         try {
           requestAnimationFrame(() => this.animate());
-          const delta = this.clock.getDelta();
+          const delta = Math.min(this.clock.getDelta(), 0.1);
 
           if (!this.zoomedObject) {
             this.moveCamera(delta);
+            if (this.lookJoystick.active) {
+              this.camera.rotation.y -= this.lookJoystick.vector.x * 0.05;
+              this.camera.rotation.x = Math.max(-Math.PI/4, Math.min(Math.PI/4, this.camera.rotation.x - this.lookJoystick.vector.y * 0.05));
+            }
           }
 
           if (this.renderer && this.cssRenderer && this.scene && this.camera) {
@@ -630,6 +814,7 @@
       new SceneManager();
     } catch (error) {
       console.error('SceneManager initialization failed:', error);
+      document.getElementById('loading').textContent = 'Initialization Failed';
     }
   </script>
 </body>
