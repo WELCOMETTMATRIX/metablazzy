@@ -58,25 +58,26 @@
       position: relative;
       width: 120px;
       height: 120px;
-      background: rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.15);
       border-radius: 50%;
       touch-action: none;
       user-select: none;
+      transition: background 0.2s;
     }
     .joystick {
       position: absolute;
       width: 60px;
       height: 60px;
-      background: rgba(255, 255, 255, 0.3);
+      background: rgba(255, 255, 255, 0.4);
       border-radius: 50%;
       top: 30px;
       left: 30px;
-      transition: background 0.2s, opacity 0.2s;
-      opacity: 0.7;
+      transition: transform 0.1s, background 0.2s, scale 0.2s;
+      scale: 1;
     }
     .joystick.active {
-      background: rgba(255, 255, 255, 0.5);
-      opacity: 1;
+      background: rgba(255, 255, 255, 0.6);
+      scale: 1.1;
     }
     @media (max-width: 768px) {
       #mobile-controls, #look-controls {
@@ -89,7 +90,7 @@
   </style>
 </head>
 <body>
-  <div id="info">Desktop: WASD: Move • Mouse: Look • Click: Zoom • Double-Click/Esc: Reset<br>Mobile: Joystick: Move • Look Joystick: Rotate • Tap: Zoom • Double-Tap: Reset</div>
+  <div id="info">Desktop: WASD: Move • Mouse: Look • Click: Zoom • Esc/Double-Click: Exit<br>Mobile: Joystick: Move • Look Joystick: Rotate • Double-Tap: Zoom • Tap: Interact • Double-Tap: Exit</div>
   <div id="loading">Loading Models...</div>
   <div id="mobile-controls">
     <div class="joystick-container" id="move-joystick">
@@ -123,22 +124,23 @@
         this.cssRenderer = null;
         this.controls = null;
         this.move = { forward: 0, backward: 0, left: 0, right: 0 };
-        this.moveSpeed = 0.6;
+        this.moveSpeed = 3.1; // Set to 3.1
         this.clock = new THREE.Clock();
         this.raycaster = new THREE.Raycaster();
         this.isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
         this.zoomedObject = null;
         this.originalCameraPos = new THREE.Vector3();
-        this.touchStrafeVelocity = 0;
-        this.touchStartX = null;
         this.floorY = 1.6;
         this.velocity = new THREE.Vector3();
-        this.acceleration = 20;
-        this.friction = 8;
-        this.moveJoystick = { active: false, vector: new THREE.Vector2() };
-        this.lookJoystick = { active: false, vector: new THREE.Vector2() };
+        this.acceleration = 30; // Smoother response
+        this.friction = 10; // Balanced stopping
+        this.moveJoystick = { active: false, vector: new THREE.Vector2(), touchId: null };
+        this.lookJoystick = { active: false, vector: new THREE.Vector2(), touchId: null };
         this.webViewObjects = [];
         this.loadingModels = 0;
+        this.lastTap = 0;
+        this.doubleTapThreshold = 300;
+        this.tapDebounce = false;
         this.init();
       }
 
@@ -181,7 +183,7 @@
             powerPreference: 'high-performance',
             alpha: true 
           });
-          this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // Optimized for mobile
+          this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
           this.renderer.setSize(window.innerWidth, window.innerHeight);
           this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
           this.renderer.toneMappingExposure = 1.0;
@@ -193,7 +195,7 @@
           this.cssRenderer.setSize(window.innerWidth, window.innerHeight);
           this.cssRenderer.domElement.style.position = 'absolute';
           this.cssRenderer.domElement.style.top = '0';
-          this.cssRenderer.domElement.style.pointerEvents = 'none'; // Prevent CSS renderer from blocking
+          this.cssRenderer.domElement.style.pointerEvents = 'none';
           document.body.appendChild(this.cssRenderer.domElement);
         } catch (error) {
           console.error('Renderer setup failed:', error);
@@ -354,7 +356,7 @@
               borderRadius: '16px',
               boxShadow: '0 0 20px rgba(0,255,255,0.3)',
               pointerEvents: 'none',
-              transition: 'box-shadow 0.3s',
+              transition: 'box-shadow 0.3s, transform 0.3s',
               ...style
             });
             iframe.setAttribute('scrolling', 'yes');
@@ -362,6 +364,7 @@
             return iframe;
           };
 
+          // Dynamic URLs structured for flexibility (like oncyber)
           this.webViews = [
             {
               iframe: createIframe('https://dexscreener.com/cronos/0x5F028F49a7443f34aeDFc19ED986c92243d98EF5?embed=1&loadChartSettings=0&chartLeftToolbar=0&chartTheme=dark&theme=dark&chartStyle=0&chartType=usd&interval=15'),
@@ -447,18 +450,21 @@
 
           this.originalCameraPos.copy(this.camera.position);
           const targetPos = cssObject.position.clone();
-          targetPos.z += 2;
-          targetPos.y = cssObject.position.y;
+          targetPos.z += 1.5; // Closer for oncyber-like experience
+          targetPos.y = cssObject.position.y + 0.2; // Slight upward offset
 
           this.controls.enabled = false;
           this.zoomedObject = cssObject;
 
-          cssObject.scale.setScalar(cssObject.scale.x * 1.5);
+          cssObject.scale.setScalar(cssObject.scale.x * 1.4); // Slightly smaller scale for clarity
           cssObject.element.style.boxShadow = '0 0 30px rgba(0,255,255,0.5)';
+          cssObject.element.style.transform += ' translateZ(10px)'; // Pop out effect
 
-          const duration = 500;
+          const duration = 600; // Slightly longer for smoothness
           const startTime = Date.now();
           const startPos = this.camera.position.clone();
+          const startRot = this.camera.rotation.clone();
+          const targetRot = new THREE.Euler(0, cssObject.rotation.y, 0);
 
           const easeOutQuad = t => 1 - (1 - t) * (1 - t);
 
@@ -468,11 +474,14 @@
             const easedT = easeOutQuad(t);
 
             this.camera.position.lerpVectors(startPos, targetPos, easedT);
+            this.camera.rotation.x = startRot.x + (targetRot.x - startRot.x) * easedT;
+            this.camera.rotation.y = startRot.y + (targetRot.y - startRot.y) * easedT;
 
             if (t < 1) {
               requestAnimationFrame(animateZoom);
             } else {
               cssObject.element.style.pointerEvents = 'auto';
+              this.camera.lookAt(cssObject.position);
             }
           };
 
@@ -486,14 +495,16 @@
         try {
           if (!this.zoomedObject) return;
 
-          const duration = 500;
+          const duration = 600;
           const startTime = Date.now();
           const startPos = this.camera.position.clone();
+          const startRot = this.camera.rotation.clone();
           const cssObject = this.zoomedObject;
 
           cssObject.element.style.pointerEvents = 'none';
           cssObject.element.style.boxShadow = this.webViews.find(w => w.iframe === cssObject.element).iframe.style.boxShadow;
-          cssObject.scale.setScalar(cssObject.scale.x / 1.5);
+          cssObject.element.style.transform = cssObject.element.style.transform.replace(' translateZ(10px)', '');
+          cssObject.scale.setScalar(cssObject.scale.x / 1.4);
 
           const easeOutQuad = t => 1 - (1 - t) * (1 - t);
 
@@ -503,6 +514,8 @@
             const easedT = easeOutQuad(t);
 
             this.camera.position.lerpVectors(startPos, this.originalCameraPos, easedT);
+            this.camera.rotation.x = startRot.x + (this.originalCameraPos.x - startRot.x) * easedT;
+            this.camera.rotation.y = startRot.y + (this.originalCameraPos.y - startRot.y) * easedT;
 
             if (t < 1) {
               requestAnimationFrame(animateReset);
@@ -519,7 +532,7 @@
       }
 
       moveCamera(delta) {
-        if (!this.camera) return;
+        if (!this.camera || this.zoomedObject) return;
 
         const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
         const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
@@ -531,15 +544,15 @@
         if (this.move.backward || this.moveJoystick.vector.y < -0.1) {
           targetVelocity.sub(forward.clone().multiplyScalar(this.move.backward || -this.moveJoystick.vector.y));
         }
-        if (this.move.left || this.moveJoystick.vector.x < -0.1 || this.touchStrafeVelocity < -0.1) {
-          targetVelocity.sub(right.clone().multiplyScalar(this.move.left || -this.moveJoystick.vector.x || Math.abs(this.touchStrafeVelocity)));
+        if (this.move.left || this.moveJoystick.vector.x < -0.1) {
+          targetVelocity.sub(right.clone().multiplyScalar(this.move.left || -this.moveJoystick.vector.x));
         }
-        if (this.move.right || this.moveJoystick.vector.x > 0.1 || this.touchStrafeVelocity > 0.1) {
-          targetVelocity.add(right.clone().multiplyScalar(this.move.right || this.moveJoystick.vector.x || Math.abs(this.touchStrafeVelocity)));
+        if (this.move.right || this.moveJoystick.vector.x > 0.1) {
+          targetVelocity.add(right.clone().multiplyScalar(this.move.right || this.moveJoystick.vector.x));
         }
 
         targetVelocity.multiplyScalar(this.moveSpeed);
-        this.velocity.lerp(targetVelocity, this.acceleration * delta);
+        this.velocity.lerp(targetVelocity, this.acceleration * delta * 0.5); // Smoother interpolation
 
         if (targetVelocity.length() < 0.01) {
           this.velocity.lerp(new THREE.Vector3(), this.friction * delta);
@@ -551,13 +564,14 @@
 
       setupEventListeners() {
         try {
-          let lastTap = 0;
-          const doubleTapThreshold = 300;
-
           const handleInteraction = (event, isTouch = false) => {
+            if (this.tapDebounce) return;
+            this.tapDebounce = true;
+            setTimeout(() => { this.tapDebounce = false; }, 100);
+
             const currentTime = Date.now();
-            const isDoubleTap = currentTime - lastTap < doubleTapThreshold;
-            lastTap = currentTime;
+            const isDoubleTap = currentTime - this.lastTap < this.doubleTapThreshold;
+            this.lastTap = currentTime;
 
             if (isTouch) {
               event.preventDefault();
@@ -576,14 +590,25 @@
 
               if (intersects.length > 0) {
                 const cssObject = intersects[0].object;
-                if (isDoubleTap || (this.zoomedObject === cssObject && isTouch)) {
-                  if (this.zoomedObject) {
-                    this.resetZoom();
+                if (isTouch) {
+                  if (isDoubleTap) {
+                    if (this.zoomedObject) {
+                      this.resetZoom();
+                    } else {
+                      this.zoomToWebView(cssObject);
+                    }
+                  } else if (this.zoomedObject === cssObject) {
+                    cssObject.element.style.pointerEvents = 'auto';
+                    // Allow iframe to handle the tap
                   }
                 } else {
-                  this.zoomToWebView(cssObject);
+                  if (this.zoomedObject === cssObject) {
+                    this.resetZoom();
+                  } else {
+                    this.zoomToWebView(cssObject);
+                  }
                 }
-              } else if (this.zoomedObject && (isDoubleTap || !isTouch)) {
+              } else if (this.zoomedObject && (!isTouch || isDoubleTap)) {
                 this.resetZoom();
               }
             }
@@ -593,7 +618,7 @@
             }
           };
 
-          // Webview hover effect (desktop only)
+          // Desktop hover effect
           if (!this.isMobile) {
             document.addEventListener('mousemove', (event) => {
               if (this.zoomedObject) return;
@@ -604,10 +629,12 @@
               this.raycaster.setFromCamera(pointer, this.camera);
               const intersects = this.raycaster.intersectObjects(this.webViewObjects);
               this.webViewObjects.forEach(obj => {
-                obj.scale.setScalar(obj === this.zoomedObject ? obj.scale.x : this.webViews.find(w => w.iframe === obj.element).scale);
+                obj.scale.setScalar(this.webViews.find(w => w.iframe === obj.element).scale);
+                obj.element.style.boxShadow = this.webViews.find(w => w.iframe === obj.element).iframe.style.boxShadow;
               });
               if (intersects.length > 0) {
-                intersects[0].object.scale.setScalar(intersects[0].object.scale.x * 1.05);
+                intersects[0].object.scale.setScalar(intersects[0].object.scale.x * 1.1);
+                intersects[0].object.element.style.boxShadow = '0 0 25px rgba(0,255,255,0.4)';
               }
             });
           }
@@ -618,7 +645,10 @@
             const lookJoystickContainer = document.getElementById('look-joystick');
             const lookJoystick = lookJoystickContainer.querySelector('.joystick');
 
-            const handleJoystick = (container, joystick, joystickState, touch, isMoveJoystick) => {
+            const handleJoystick = (container, joystick, joystickState, touch) => {
+              if (joystickState.touchId !== null && touch.identifier !== joystickState.touchId) return;
+              joystickState.touchId = touch.identifier;
+
               const rect = container.getBoundingClientRect();
               const centerX = rect.left + rect.width / 2;
               const centerY = rect.top + rect.height / 2;
@@ -643,7 +673,10 @@
               joystick.classList.add('active');
 
               joystickState.active = true;
-              joystickState.vector.set(offsetX / maxDistance, -offsetY / maxDistance);
+              joystickState.vector.set(
+                Math.max(-1, Math.min(1, offsetX / maxDistance)),
+                Math.max(-1, Math.min(1, -offsetY / maxDistance))
+              );
             };
 
             const resetJoystick = (joystick, joystickState) => {
@@ -651,40 +684,51 @@
               joystick.classList.remove('active');
               joystickState.active = false;
               joystickState.vector.set(0, 0);
+              joystickState.touchId = null;
             };
 
             moveJoystickContainer.addEventListener('touchstart', (e) => {
-              e.preventDefault();
-              const touch = e.touches[0];
-              handleJoystick(moveJoystickContainer, moveJoystick, this.moveJoystick, touch, true);
+              e.stopPropagation();
+              const touch = e.changedTouches[0];
+              handleJoystick(moveJoystickContainer, moveJoystick, this.moveJoystick, touch);
             });
 
             moveJoystickContainer.addEventListener('touchmove', (e) => {
-              e.preventDefault();
-              const touch = e.touches[0];
-              handleJoystick(moveJoystickContainer, moveJoystick, this.moveJoystick, touch, true);
+              e.stopPropagation();
+              for (let touch of e.changedTouches) {
+                handleJoystick(moveJoystickContainer, moveJoystick, this.moveJoystick, touch);
+              }
             });
 
             moveJoystickContainer.addEventListener('touchend', (e) => {
-              e.preventDefault();
-              resetJoystick(moveJoystick, this.moveJoystick);
+              e.stopPropagation();
+              for (let touch of e.changedTouches) {
+                if (touch.identifier === this.moveJoystick.touchId) {
+                  resetJoystick(moveJoystick, this.moveJoystick);
+                }
+              }
             });
 
             lookJoystickContainer.addEventListener('touchstart', (e) => {
-              e.preventDefault();
-              const touch = e.touches[0];
-              handleJoystick(lookJoystickContainer, lookJoystick, this.lookJoystick, touch, false);
+              e.stopPropagation();
+              const touch = e.changedTouches[0];
+              handleJoystick(lookJoystickContainer, lookJoystick, this.lookJoystick, touch);
             });
 
             lookJoystickContainer.addEventListener('touchmove', (e) => {
-              e.preventDefault();
-              const touch = e.touches[0];
-              handleJoystick(lookJoystickContainer, lookJoystick, this.lookJoystick, touch, false);
+              e.stopPropagation();
+              for (let touch of e.changedTouches) {
+                handleJoystick(lookJoystickContainer, lookJoystick, this.lookJoystick, touch);
+              }
             });
 
             lookJoystickContainer.addEventListener('touchend', (e) => {
-              e.preventDefault();
-              resetJoystick(lookJoystick, this.lookJoystick);
+              e.stopPropagation();
+              for (let touch of e.changedTouches) {
+                if (touch.identifier === this.lookJoystick.touchId) {
+                  resetJoystick(lookJoystick, this.lookJoystick);
+                }
+              }
             });
 
             document.addEventListener('touchstart', (event) => {
@@ -693,16 +737,9 @@
             });
 
             document.addEventListener('touchmove', (event) => {
-              if (this.zoomedObject && !event.target.closest('.joystick-container')) {
-                // Allow iframe scrolling
-              } else if (!event.target.closest('.joystick-container')) {
+              if (!event.target.closest('.joystick-container') && !this.zoomedObject) {
                 event.preventDefault();
               }
-            });
-
-            document.addEventListener('touchend', () => {
-              this.touchStrafeVelocity = 0;
-              this.touchStartX = null;
             });
 
             if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
@@ -729,7 +766,7 @@
                 case 'KeyS': this.move.backward = 1; break;
                 case 'KeyA': this.move.left = 1; break;
                 case 'KeyD': this.move.right = 1; break;
-                case 'Escape': this.resetZoom(); break;
+                case 'Escape': if (this.zoomedObject) this.resetZoom(); break;
               }
             });
 
